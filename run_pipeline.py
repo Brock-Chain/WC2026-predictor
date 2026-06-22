@@ -56,7 +56,9 @@ def cmd_report():
     if missing:
         print(f"[warn] {len(missing)} fixture teams unseen in training window: "
               f"{sorted(missing)}")
-    out = report.render_report(idata, fx, teams)
+    from datetime import date
+    out = report.render_report(idata, fx, teams,
+                               generated_on=date.today().strftime("%b %d, %Y"))
     print(f"[ok] report -> {out}")
 
 
