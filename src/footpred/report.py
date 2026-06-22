@@ -20,6 +20,7 @@ One ``.html`` file, inline CSS+JS, no external assets.
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 
 import numpy as np
@@ -397,6 +398,109 @@ def _callouts(preds) -> str:
 _STAGE_ORDER = ["Group"]
 
 
+def _variant_table_html() -> str:
+    """If a model-variant backtest comparison exists, render it as a table."""
+    path = PROJECT_ROOT / "reports" / "model_variants.json"
+    if not path.exists():
+        return ""
+    try:
+        rows = json.loads(path.read_text())
+    except Exception:
+        return ""
+    order = ["baseline", "dixon_coles", "confederation", "dc+confed", "elo"]
+    label = {"baseline": "Double-Poisson (shipped)", "dixon_coles": "+ Dixon–Coles",
+             "confederation": "+ Confederation layer", "dc+confed": "+ Both",
+             "elo": "Elo baseline"}
+    best_rps = min((r["RPS"] for r in rows.values()), default=None)
+    body = []
+    for k in order:
+        if k not in rows:
+            continue
+        r = rows[k]
+        star = " &#9733;" if r["RPS"] == best_rps else ""
+        body.append(
+            f"<tr><td class='tl'>{label.get(k, k)}{star}</td>"
+            f"<td>{r['RPS']:.4f}</td><td>{r['log_loss']:.3f}</td>"
+            f"<td>{r['Brier']:.3f}</td><td>{r.get('accuracy', 0)*100:.1f}%</td></tr>"
+        )
+    return (
+        "<table class='mtable'><thead><tr><th class='tl'>Model</th>"
+        "<th>RPS</th><th>log-loss</th><th>Brier</th><th>acc</th></tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table>"
+        "<p class='m-note'>Lower RPS / log-loss / Brier is better. &#9733; = best. "
+        "Expanding-window temporal backtest, no leakage.</p>"
+    )
+
+
+def _method_section(metrics: dict, n_teams: int) -> str:
+    """The 'Method' tab: what the model is, the data, validation, and an honest
+    record of what was tested and rejected — the portfolio narrative."""
+    rps_edge = (metrics["elo_rps"] - metrics["bayes_rps"]) / metrics["elo_rps"] * 100
+    return (
+        "<section class='method' id='method'>"
+        "<h2>How this works</h2>"
+        "<p class='m-lead'>Every number on this page comes from one Bayesian "
+        "statistical model fit to historical results — no hand-tuning, no "
+        "bookmaker odds. Here's the honest version of what it does and what it "
+        "can't.</p>"
+
+        "<div class='m-grid'>"
+
+        "<div class='m-card'><h3>The model</h3>"
+        "<p>A <b>Bayesian hierarchical double-Poisson</b> (the Dixon–Coles "
+        "lineage). Each team carries a latent <b class='lbl-atk'>attack</b> and "
+        "<b class='lbl-def'>defense</b> strength; goals are Poisson-distributed "
+        "around those strengths, with a single home-advantage term that switches "
+        "off at neutral venues.</p>"
+        "<pre class='m-eq'>log &#955;_home = intercept + home_adv&#183;(1&#8722;neutral) "
+        "+ atk[home] &#8722; def[away]\nlog &#955;_away = intercept "
+        "+ atk[away] &#8722; def[home]</pre>"
+        "<p>It's fit by <b>MCMC</b> (PyMC + nutpie), so every prediction "
+        "integrates over the full posterior — the scoreline grid reflects "
+        "genuine parameter uncertainty, not a single point estimate.</p></div>"
+
+        "<div class='m-card'><h3>The data</h3>"
+        "<p>The CC0 <a href='https://github.com/martj42/international_results'>"
+        "martj42/international_results</a> dataset — <b>8,000+</b> men's "
+        f"international matches since 2018, <b>{n_teams}</b> teams. The model "
+        "uses only <b>goals, venue (neutral flag), date and tournament</b>.</p>"
+        "<p class='m-warn'>It deliberately has <b>no</b> xG, shots, lineups, "
+        "player ratings, or betting odds — those barely exist for international "
+        "football and aren't in a free, redistributable source. This is a "
+        "goals-only model, and honest about it.</p></div>"
+
+        "<div class='m-card'><h3>Does it actually work?</h3>"
+        f"<p>On a temporal backtest (train on the past, predict the future, no "
+        f"leakage) it scores <b>RPS {metrics['bayes_rps']:.3f}</b> — about "
+        f"<b>{rps_edge:.0f}% better than Elo</b> ({metrics['elo_rps']:.3f}) — and "
+        "is well-calibrated (predicted probabilities match observed frequencies). "
+        "RPS is the standard proper score for ordered 1X2 outcomes.</p>"
+        f"{_variant_table_html()}</div>"
+
+        "<div class='m-card'><h3>What we tested and rejected</h3>"
+        "<p>The interesting part of a model is what <i>didn't</i> help. On the "
+        "same backtest, all of these were within run-to-run noise or worse, so "
+        "they're <b>off</b>:</p>"
+        "<ul class='m-list'>"
+        "<li><b>Time-decay weighting</b> (recent matches count more) — best "
+        "variant ~&#8722;0.3% RPS, inside the noise.</li>"
+        "<li><b>Tournament-importance weighting</b> — slightly <i>hurt</i>.</li>"
+        "<li><b>Blending with Elo</b> — a weighted average only got worse as more "
+        "Elo was added; pure Bayesian was optimal.</li>"
+        "</ul>"
+        "<p class='m-note'>The model sits at the <b>goals-only information "
+        "ceiling</b>: with this data, the plain double-Poisson is as good as it "
+        "gets. We measured that rather than assuming it.</p></div>"
+
+        "</div>"
+
+        "<p class='m-foot'>Source: martj42/international_results (CC0). "
+        "Built with Python, pandas, PyMC. Predictions are probabilistic — a 70% "
+        "favourite still loses three times in ten.</p>"
+        "</section>"
+    )
+
+
 # --- page assembly ---------------------------------------------------------
 
 def render_report(
@@ -517,6 +621,7 @@ def render_report(
         "<button class='f-btn active' data-filter='all' onclick=\"setFilter('all',this)\">All</button>"
         "<button class='f-btn' data-filter='upcoming' onclick=\"setFilter('upcoming',this)\">Upcoming</button>"
         "<button class='f-btn' data-filter='played' onclick=\"setFilter('played',this)\">Results</button>"
+        "<button class='f-btn' data-filter='method' onclick=\"setFilter('method',this)\">Method</button>"
         "</div>"
         "<input id='search' class='search' type='search' autocomplete='off' "
         "placeholder='Search a team…' aria-label='Search for a team' "
@@ -534,6 +639,7 @@ def render_report(
         f"<div class='no-results' id='no-results'>No matches for that team.</div>"
         f"{''.join(sections)}"
         f"{chrono_html}"
+        f"{_method_section(metrics, len(teams))}"
         "<footer>Double-Poisson with hierarchical attack/defense strengths and "
         "neutral-gated home advantage, fit via MCMC (PyMC/nutpie). "
         "Backtest beats Elo on RPS, log-loss and Brier. "
@@ -767,11 +873,46 @@ body[data-filter='upcoming'] .pills{display:none}
 .chrono-day{font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;
  letter-spacing:.06em;margin:18px 0 10px}
 
+/* method tab */
+.method{display:none}
+body[data-filter='method'] .method{display:block}
+body[data-filter='method'] section.group,
+body[data-filter='method'] .chrono,
+body[data-filter='method'] .insight,
+body[data-filter='method'] .legend,
+body[data-filter='method'] .no-results,
+body[data-filter='method'] .pills,
+body[data-filter='method'] .search{display:none}
+.method h2{font-size:23px;margin:6px 0 6px}
+.m-lead{color:var(--muted);max-width:680px;margin:0 0 20px;font-size:15px}
+.m-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.m-card{background:linear-gradient(180deg,var(--card2),var(--card));
+ border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.m-card h3{margin:0 0 8px;font-size:15.5px}
+.m-card p{color:var(--muted);font-size:13.5px;margin:8px 0}
+.m-card b{color:var(--ink)}
+.m-card a{color:var(--accent)}
+.m-eq{background:#0a0e14;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+ font-size:11.5px;color:var(--ink);overflow-x:auto;white-space:pre;line-height:1.6}
+.m-warn{border-left:3px solid var(--draw);padding-left:10px}
+.m-list{color:var(--muted);font-size:13.5px;margin:8px 0;padding-left:18px}
+.m-list li{margin:4px 0}.m-list b{color:var(--ink)}
+.m-note{color:var(--faint);font-size:12px;margin-top:8px}
+.m-foot{color:var(--faint);font-size:12.5px;margin-top:18px;border-top:1px solid var(--line);
+ padding-top:14px}
+.mtable{width:100%;border-collapse:collapse;margin:10px 0 4px;font-size:12.5px}
+.mtable th{color:var(--muted);font-weight:600;text-align:center;padding:6px 5px;
+ font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line)}
+.mtable td{text-align:center;padding:6px 5px;border-bottom:1px solid var(--line);
+ font-variant-numeric:tabular-nums}
+.mtable .tl{text-align:left}
+
 @media(max-width:760px){
  .tiles{grid-template-columns:repeat(2,1fr)}
  .callouts{grid-template-columns:1fr}
  .cards{grid-template-columns:1fr}
  .st-grid{grid-template-columns:1fr}
+ .m-grid{grid-template-columns:1fr}
  .search{width:100%;order:3}
 }
 """
