@@ -21,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURES_PATH = PROJECT_ROOT / "data" / "raw" / "wc2026_fixtures.csv"
+FIXTURES_PATH = PROJECT_ROOT / "data" / "wc2026_fixtures.csv"
 
 
 def load_fixtures(path: Path | None = None) -> pd.DataFrame:

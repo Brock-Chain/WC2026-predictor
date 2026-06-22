@@ -106,20 +106,32 @@ def fit(
     chains: int = 4,
     target_accept: float = 0.9,
     random_seed: int = 42,
+    nuts_sampler: str = "nutpie",
 ) -> az.InferenceData:
     """Encode, build, and sample the model. Returns an ArviZ InferenceData
-    with the posterior."""
+    with the posterior.
+
+    ``nuts_sampler="nutpie"`` JIT-compiles the model via numba (LLVM) — fast
+    and needs no C/C++ compiler. Falls back to PyMC's default sampler if
+    nutpie is unavailable.
+    """
     df_enc, index = encode_matches(df, index)
     model = build_model(df_enc, index)
+    sample_kwargs = dict(
+        draws=draws,
+        tune=tune,
+        chains=chains,
+        target_accept=target_accept,
+        random_seed=random_seed,
+        progressbar=True,
+    )
     with model:
-        idata = pm.sample(
-            draws=draws,
-            tune=tune,
-            chains=chains,
-            target_accept=target_accept,
-            random_seed=random_seed,
-            progressbar=True,
-        )
+        try:
+            idata = pm.sample(nuts_sampler=nuts_sampler, **sample_kwargs)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            print(f"[warn] {nuts_sampler} sampler failed ({exc}); "
+                  f"falling back to default PyMC sampler.")
+            idata = pm.sample(**sample_kwargs)
     # Stash the team list so downstream code is self-contained.
     idata.attrs["teams"] = list(index.teams)
     return idata

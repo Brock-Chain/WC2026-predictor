@@ -22,8 +22,8 @@ from footpred.fixtures import check_team_names, load_fixtures
 def cmd_data():
     df = data.build_dataset()
     idx = data.TeamIndex.from_matches(df)
-    print(f"✓ {len(df):,} matches, {idx.n_teams} teams, "
-          f"{df['date'].min().date()} → {df['date'].max().date()}")
+    print(f"[ok] {len(df):,} matches, {idx.n_teams} teams, "
+          f"{df['date'].min().date()} -> {df['date'].max().date()}")
 
 
 def cmd_fit():
@@ -32,7 +32,7 @@ def cmd_fit():
     print(model.convergence_summary(idata))
     print(f"divergences: {model.n_divergences(idata)}")
     path = model.save_trace(idata)
-    print(f"✓ trace saved → {path}")
+    print(f"[ok] trace saved -> {path}")
 
 
 def cmd_predict(home: str, away: str):
@@ -54,10 +54,10 @@ def cmd_report():
     fx = load_fixtures()
     missing = check_team_names(fx, teams)
     if missing:
-        print(f"⚠ {len(missing)} fixture teams unseen in training window: "
+        print(f"[warn] {len(missing)} fixture teams unseen in training window: "
               f"{sorted(missing)}")
     out = report.render_report(idata, fx, teams)
-    print(f"✓ report → {out}")
+    print(f"[ok] report -> {out}")
 
 
 def main(argv: list[str]) -> int:
