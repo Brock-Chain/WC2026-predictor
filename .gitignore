@@ -1,0 +1,21 @@
+# Data (downloadable / regenerable — not version controlled)
+data/raw/
+data/processed/
+
+# Fitted model artifacts (large NetCDF traces)
+models/*.nc
+models/*.netcdf
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
