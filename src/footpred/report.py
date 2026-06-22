@@ -222,13 +222,15 @@ def _match_card(row, pred: Prediction | None) -> str:
     home = f"{hf} {html.escape(row.home_team)}".strip()
     away = f"{html.escape(row.away_team)} {af}".strip()
     date = pd.Timestamp(row.date).strftime("%b %d") if pd.notna(row.date) else ""
+    t = str(getattr(row, "time_et", "") or "").strip()
+    meta = f"{date} &middot; {t} ET" if t else date
     played = bool(getattr(row, "played", False))
 
     if pred is None:
         return (f"<div class='match skip' data-state='skip'>"
                 f"<div class='m-top'><span class='teams'>{home} "
                 f"<span class='vs'>v</span> {away}</span>"
-                f"<span class='meta'>{date}</span></div>"
+                f"<span class='meta'>{meta}</span></div>"
                 f"<div class='skip-note'>No prediction — a team has "
                 f"insufficient recent data (unseen in the 2018+ window).</div>"
                 f"</div>")
@@ -288,7 +290,7 @@ def _match_card(row, pred: Prediction | None) -> str:
         f"<div class='match' data-state='{state}' data-teams='{html.escape(teams_attr)}'>"
         f"<div class='m-top'><span class='teams'>{home} "
         f"<span class='vs'>v</span> {away}</span>"
-        f"<span class='meta'>{date}</span></div>"
+        f"<span class='meta'>{meta}</span></div>"
         f"{_bar_html(pred)}"
         f"<div class='m-body'>"
         f"<div class='m-left'>{headline}{stats}</div>"

@@ -37,7 +37,17 @@ def load_fixtures(path: Path | None = None) -> pd.DataFrame:
         df[col] = pd.to_numeric(df.get(col), errors="coerce")
     df["played"] = df["home_score"].notna() & df["away_score"].notna()
     df["group"] = df.get("group", "").fillna("")
-    return df.sort_values("date").reset_index(drop=True)
+    # Kick-off time (US Eastern). Combine with date into a single datetime so
+    # matches order correctly *within* a day, not just by date.
+    if "time_et" not in df.columns:
+        df["time_et"] = ""
+    df["time_et"] = df["time_et"].fillna("").astype(str).str.strip()
+    valid_t = df["time_et"].str.match(r"^\d{1,2}:\d{2}$")
+    clock = df["time_et"].where(valid_t, "00:00")
+    df["kickoff"] = pd.to_datetime(
+        df["date"].dt.strftime("%Y-%m-%d") + " " + clock, errors="coerce")
+    df["kickoff"] = df["kickoff"].fillna(df["date"])
+    return df.sort_values("kickoff").reset_index(drop=True)
 
 
 def check_team_names(fixtures: pd.DataFrame, known_teams: list[str]) -> set[str]:

@@ -1,73 +1,73 @@
-stage,group,date,home_team,away_team,home_score,away_score
-Group,A,2026-06-11,Mexico,South Africa,2,0
-Group,A,2026-06-11,South Korea,Czech Republic,2,1
-Group,A,2026-06-18,Czech Republic,South Africa,1,1
-Group,A,2026-06-18,Mexico,South Korea,1,0
-Group,A,2026-06-24,Czech Republic,Mexico,,
-Group,A,2026-06-24,South Africa,South Korea,,
-Group,B,2026-06-12,Canada,Bosnia and Herzegovina,1,1
-Group,B,2026-06-13,Qatar,Switzerland,1,1
-Group,B,2026-06-18,Switzerland,Bosnia and Herzegovina,4,1
-Group,B,2026-06-18,Canada,Qatar,6,0
-Group,B,2026-06-24,Switzerland,Canada,,
-Group,B,2026-06-24,Bosnia and Herzegovina,Qatar,,
-Group,C,2026-06-13,Brazil,Morocco,1,1
-Group,C,2026-06-13,Scotland,Haiti,1,0
-Group,C,2026-06-19,Morocco,Scotland,1,0
-Group,C,2026-06-19,Brazil,Haiti,3,0
-Group,C,2026-06-24,Scotland,Brazil,,
-Group,C,2026-06-24,Morocco,Haiti,,
-Group,D,2026-06-12,United States,Paraguay,4,1
-Group,D,2026-06-13,Australia,Turkey,2,0
-Group,D,2026-06-19,United States,Australia,2,0
-Group,D,2026-06-19,Paraguay,Turkey,1,0
-Group,D,2026-06-25,Turkey,United States,,
-Group,D,2026-06-25,Paraguay,Australia,,
-Group,E,2026-06-14,Germany,Curaçao,7,1
-Group,E,2026-06-14,Ivory Coast,Ecuador,1,0
-Group,E,2026-06-20,Germany,Ivory Coast,2,1
-Group,E,2026-06-20,Ecuador,Curaçao,0,0
-Group,E,2026-06-25,Ecuador,Germany,,
-Group,E,2026-06-25,Curaçao,Ivory Coast,,
-Group,F,2026-06-14,Netherlands,Japan,2,2
-Group,F,2026-06-14,Sweden,Tunisia,5,1
-Group,F,2026-06-20,Netherlands,Sweden,5,1
-Group,F,2026-06-20,Tunisia,Japan,0,4
-Group,F,2026-06-25,Japan,Sweden,,
-Group,F,2026-06-25,Tunisia,Netherlands,,
-Group,G,2026-06-15,Belgium,Egypt,1,1
-Group,G,2026-06-15,Iran,New Zealand,2,2
-Group,G,2026-06-21,Belgium,Iran,0,0
-Group,G,2026-06-21,New Zealand,Egypt,,
-Group,G,2026-06-26,Egypt,Iran,,
-Group,G,2026-06-26,New Zealand,Belgium,,
-Group,H,2026-06-15,Spain,Cape Verde,0,0
-Group,H,2026-06-15,Saudi Arabia,Uruguay,1,1
-Group,H,2026-06-21,Spain,Saudi Arabia,4,0
-Group,H,2026-06-21,Uruguay,Cape Verde,2,2
-Group,H,2026-06-26,Cape Verde,Saudi Arabia,,
-Group,H,2026-06-26,Uruguay,Spain,,
-Group,I,2026-06-16,France,Senegal,3,1
-Group,I,2026-06-16,Norway,Iraq,4,1
-Group,I,2026-06-22,France,Iraq,,
-Group,I,2026-06-22,Senegal,Norway,,
-Group,I,2026-06-26,Norway,France,,
-Group,I,2026-06-26,Senegal,Iraq,,
-Group,J,2026-06-16,Argentina,Algeria,3,0
-Group,J,2026-06-17,Austria,Jordan,3,1
-Group,J,2026-06-23,Argentina,Austria,,
-Group,J,2026-06-23,Algeria,Jordan,,
-Group,J,2026-06-27,Algeria,Austria,,
-Group,J,2026-06-27,Jordan,Argentina,,
-Group,K,2026-06-17,Portugal,DR Congo,1,1
-Group,K,2026-06-17,Colombia,Uzbekistan,3,1
-Group,K,2026-06-23,Portugal,Uzbekistan,,
-Group,K,2026-06-23,DR Congo,Colombia,,
-Group,K,2026-06-27,Colombia,Portugal,,
-Group,K,2026-06-27,DR Congo,Uzbekistan,,
-Group,L,2026-06-17,England,Croatia,4,2
-Group,L,2026-06-17,Ghana,Panama,1,0
-Group,L,2026-06-22,England,Ghana,,
-Group,L,2026-06-22,Croatia,Panama,,
-Group,L,2026-06-27,Panama,England,,
-Group,L,2026-06-27,Croatia,Ghana,,
+stage,group,date,time_et,home_team,away_team,home_score,away_score
+Group,A,2026-06-11,15:00,Mexico,South Africa,,
+Group,A,2026-06-11,22:00,South Korea,Czech Republic,,
+Group,A,2026-06-18,12:00,Czech Republic,South Africa,,
+Group,A,2026-06-18,21:00,Mexico,South Korea,,
+Group,A,2026-06-24,21:00,Czech Republic,Mexico,,
+Group,A,2026-06-24,21:00,South Africa,South Korea,,
+Group,B,2026-06-12,15:00,Canada,Bosnia and Herzegovina,,
+Group,B,2026-06-13,15:00,Qatar,Switzerland,,
+Group,B,2026-06-18,15:00,Switzerland,Bosnia and Herzegovina,,
+Group,B,2026-06-18,18:00,Canada,Qatar,,
+Group,B,2026-06-24,15:00,Switzerland,Canada,,
+Group,B,2026-06-24,15:00,Bosnia and Herzegovina,Qatar,,
+Group,C,2026-06-13,18:00,Brazil,Morocco,,
+Group,C,2026-06-13,21:00,Haiti,Scotland,,
+Group,C,2026-06-19,18:00,Scotland,Morocco,,
+Group,C,2026-06-19,20:30,Brazil,Haiti,,
+Group,C,2026-06-24,18:00,Scotland,Brazil,,
+Group,C,2026-06-24,18:00,Morocco,Haiti,,
+Group,D,2026-06-12,21:00,United States,Paraguay,,
+Group,D,2026-06-14,00:00,Australia,Turkey,,
+Group,D,2026-06-19,15:00,United States,Australia,,
+Group,D,2026-06-19,23:00,Turkey,Paraguay,,
+Group,D,2026-06-25,22:00,Turkey,United States,,
+Group,D,2026-06-25,22:00,Paraguay,Australia,,
+Group,E,2026-06-14,13:00,Germany,Curaçao,,
+Group,E,2026-06-14,19:00,Ivory Coast,Ecuador,,
+Group,E,2026-06-20,16:00,Germany,Ivory Coast,,
+Group,E,2026-06-20,20:00,Ecuador,Curaçao,,
+Group,E,2026-06-25,16:00,Curaçao,Ivory Coast,,
+Group,E,2026-06-25,16:00,Ecuador,Germany,,
+Group,F,2026-06-14,16:00,Netherlands,Japan,,
+Group,F,2026-06-14,22:00,Sweden,Tunisia,,
+Group,F,2026-06-20,13:00,Netherlands,Sweden,,
+Group,F,2026-06-21,00:00,Tunisia,Japan,,
+Group,F,2026-06-25,19:00,Japan,Sweden,,
+Group,F,2026-06-25,19:00,Tunisia,Netherlands,,
+Group,G,2026-06-15,15:00,Belgium,Egypt,,
+Group,G,2026-06-15,21:00,Iran,New Zealand,,
+Group,G,2026-06-21,15:00,Belgium,Iran,,
+Group,G,2026-06-21,21:00,New Zealand,Egypt,,
+Group,G,2026-06-26,23:00,Egypt,Iran,,
+Group,G,2026-06-26,23:00,New Zealand,Belgium,,
+Group,H,2026-06-15,12:00,Spain,Cape Verde,,
+Group,H,2026-06-15,18:00,Saudi Arabia,Uruguay,,
+Group,H,2026-06-21,12:00,Spain,Saudi Arabia,,
+Group,H,2026-06-21,18:00,Uruguay,Cape Verde,,
+Group,H,2026-06-26,20:00,Cape Verde,Saudi Arabia,,
+Group,H,2026-06-26,20:00,Uruguay,Spain,,
+Group,I,2026-06-16,15:00,France,Senegal,,
+Group,I,2026-06-16,18:00,Iraq,Norway,,
+Group,I,2026-06-22,17:00,France,Iraq,,
+Group,I,2026-06-22,20:00,Norway,Senegal,,
+Group,I,2026-06-26,15:00,Norway,France,,
+Group,I,2026-06-26,15:00,Senegal,Iraq,,
+Group,J,2026-06-16,21:00,Argentina,Algeria,,
+Group,J,2026-06-17,00:00,Austria,Jordan,,
+Group,J,2026-06-22,13:00,Argentina,Austria,,
+Group,J,2026-06-22,23:00,Jordan,Algeria,,
+Group,J,2026-06-27,22:00,Algeria,Austria,,
+Group,J,2026-06-27,22:00,Jordan,Argentina,,
+Group,K,2026-06-17,13:00,Portugal,DR Congo,,
+Group,K,2026-06-17,22:00,Uzbekistan,Colombia,,
+Group,K,2026-06-23,13:00,Portugal,Uzbekistan,,
+Group,K,2026-06-23,22:00,Colombia,DR Congo,,
+Group,K,2026-06-27,19:30,Colombia,Portugal,,
+Group,K,2026-06-27,19:30,DR Congo,Uzbekistan,,
+Group,L,2026-06-17,16:00,England,Croatia,,
+Group,L,2026-06-17,19:00,Ghana,Panama,,
+Group,L,2026-06-23,16:00,England,Ghana,,
+Group,L,2026-06-23,19:00,Panama,Croatia,,
+Group,L,2026-06-27,17:00,Panama,England,,
+Group,L,2026-06-27,17:00,Croatia,Ghana,,
