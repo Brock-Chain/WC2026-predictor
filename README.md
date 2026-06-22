@@ -59,12 +59,38 @@ python run_pipeline.py report               # → wc2026_predictions.html
 
 Run the tests with `pytest`.
 
+> **Sampler note:** fitting uses [`nutpie`](https://github.com/pymc-devs/nutpie)
+> with the **numba** backend, which JIT-compiles the model via LLVM and needs
+> **no C/C++ compiler** (handy on Windows without MSVC/MinGW). It falls back to
+> PyMC's default sampler automatically if nutpie is unavailable.
+
 ## Validation
 
 `footpred.backtest` does an **expanding-window temporal backtest** (train on
 ≤T, score T+1; no leakage) reporting **RPS** (primary, ordered 1X2),
 **log-loss**, **Brier**, and a calibration table — benchmarked against **Elo**
 and a naive baseline. See `notebooks/03_backtest.ipynb`.
+
+## Results
+
+**Temporal backtest** (expanding window, folds at 2024/2025/2026, ~2,570 scored
+matches, no leakage). Lower is better on all three:
+
+| Model | RPS | log-loss | Brier |
+|---|---|---|---|
+| **Bayesian double-Poisson (MCMC)** | **0.166** | **0.860** | **0.506** |
+| Elo (home-adv) | 0.182 | 0.937 | 0.547 |
+| Naive (home-win prior) | 0.228 | 1.057 | 0.637 |
+
+The Bayesian model beats Elo on every metric and is **well-calibrated** —
+predicted home-win probability tracks the empirical rate closely across all
+deciles. On the **WC2026 group stage** it called **24/39 (62%)** of played
+matches correctly (1X2).
+
+Fit diagnostics (full run, 1000 draws × 4 chains): **0 divergences**;
+`home_adv`, `sd_att`, `sd_def` all R-hat ≈ 1.00. The global `intercept` mixes
+slowly (R-hat ≈ 1.10) due to the usual weak identifiability against the
+zero-centered team strengths — it doesn't affect predictions.
 
 ## Phases
 
