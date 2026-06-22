@@ -1,7 +1,47 @@
 {
-  "baseline": {"n_matches": 2573, "RPS": 0.1659, "log_loss": 0.8605, "Brier": 0.5055, "accuracy": 0.6009, "draw_pred_rate": 0.226, "draw_actual_rate": 0.2382},
-  "dixon_coles": {"n_matches": 2573, "RPS": 0.1846, "log_loss": 0.9365, "Brier": 0.5594, "accuracy": 0.5356, "draw_pred_rate": 0.3447, "draw_actual_rate": 0.2382},
-  "confederation": {"n_matches": 2573, "RPS": 0.1651, "log_loss": 0.8572, "Brier": 0.5039, "accuracy": 0.5981, "draw_pred_rate": 0.2244, "draw_actual_rate": 0.2382},
-  "dc+confed": {"n_matches": 2573, "RPS": 0.1803, "log_loss": 0.9187, "Brier": 0.5462, "accuracy": 0.5531, "draw_pred_rate": 0.329, "draw_actual_rate": 0.2382},
-  "elo": {"n_matches": 2580, "RPS": 0.1818, "log_loss": 0.9369, "Brier": 0.5467, "accuracy": 0.4926, "draw_pred_rate": 0.196, "draw_actual_rate": 0.2326}
+  "baseline": {
+    "n_matches": 2573,
+    "RPS": 0.1659,
+    "log_loss": 0.8605,
+    "Brier": 0.5055,
+    "accuracy": 0.6009,
+    "draw_pred_rate": 0.226,
+    "draw_actual_rate": 0.2382
+  },
+  "dixon_coles": {
+    "n_matches": 2573,
+    "RPS": 0.1659,
+    "log_loss": 0.8599,
+    "Brier": 0.5053,
+    "accuracy": 0.6009,
+    "draw_pred_rate": 0.2316,
+    "draw_actual_rate": 0.2382
+  },
+  "confederation": {
+    "n_matches": 2573,
+    "RPS": 0.1651,
+    "log_loss": 0.8572,
+    "Brier": 0.5039,
+    "accuracy": 0.5981,
+    "draw_pred_rate": 0.2244,
+    "draw_actual_rate": 0.2382
+  },
+  "dc+confed": {
+    "n_matches": 2573,
+    "RPS": 0.1651,
+    "log_loss": 0.8563,
+    "Brier": 0.5036,
+    "accuracy": 0.6005,
+    "draw_pred_rate": 0.2304,
+    "draw_actual_rate": 0.2382
+  },
+  "elo": {
+    "n_matches": 2580,
+    "RPS": 0.1818,
+    "log_loss": 0.9369,
+    "Brier": 0.5467,
+    "accuracy": 0.4926,
+    "draw_pred_rate": 0.196,
+    "draw_actual_rate": 0.2326
+  }
 }
