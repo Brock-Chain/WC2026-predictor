@@ -46,3 +46,67 @@ def check_team_names(fixtures: pd.DataFrame, known_teams: list[str]) -> set[str]
     known = set(known_teams)
     used = set(fixtures["home_team"]) | set(fixtures["away_team"])
     return {t for t in used if t not in known}
+
+
+# Tournament window for auto-syncing played results from the live dataset.
+WC_START = "2026-06-01"
+WC_TOURNAMENT = "World Cup"
+
+
+def sync_played_results(
+    fixtures: pd.DataFrame,
+    matches: pd.DataFrame,
+    window_start: str = WC_START,
+    tournament_contains: str = WC_TOURNAMENT,
+):
+    """Fill/correct each fixture's score from the **authoritative live dataset**.
+
+    The martj42 feed tags WC2026 games as "FIFA World Cup", so once a match is
+    played its real score appears in ``matches``. We match each scheduled fixture
+    to its result by *unordered team pair* within the tournament window, keep the
+    fixture's own home/away orientation (swapping the score if the dataset stored
+    the pair the other way round), and recompute ``played``.
+
+    This removes hand-maintained scores as a source of error: the schedule file
+    only needs the right pairings/dates; results come from the data.
+
+    Returns ``(synced_fixtures, n_filled, corrections)`` where ``corrections`` is
+    a list of (teams, old, new) for fixtures whose stored score disagreed.
+    """
+    m = matches[
+        (matches["date"] >= pd.Timestamp(window_start))
+        & matches["tournament"].str.contains(tournament_contains, case=False, na=False)
+    ]
+    lookup: dict[frozenset, tuple] = {}
+    for r in m.itertuples():
+        lookup[frozenset((r.home_team, r.away_team))] = (
+            r.home_team, r.away_team, int(r.home_score), int(r.away_score)
+        )
+
+    fx = fixtures.copy()
+    new_hs, new_as = [], []
+    n_filled = 0
+    corrections = []
+    for r in fx.itertuples():
+        key = frozenset((r.home_team, r.away_team))
+        if key in lookup and r.home_team != r.away_team:
+            dh, _da, dhs, das = lookup[key]
+            hs, as_ = (dhs, das) if r.home_team == dh else (das, dhs)
+            old = (r.home_score, r.away_score)
+            if pd.isna(old[0]) or pd.isna(old[1]):
+                n_filled += 1
+            elif (int(old[0]), int(old[1])) != (hs, as_):
+                corrections.append(
+                    (f"{r.home_team} v {r.away_team}",
+                     f"{int(old[0])}-{int(old[1])}", f"{hs}-{as_}")
+                )
+            new_hs.append(hs)
+            new_as.append(as_)
+        else:
+            new_hs.append(r.home_score)
+            new_as.append(r.away_score)
+
+    fx["home_score"] = pd.to_numeric(pd.Series(new_hs, index=fx.index), errors="coerce")
+    fx["away_score"] = pd.to_numeric(pd.Series(new_as, index=fx.index), errors="coerce")
+    fx["played"] = fx["home_score"].notna() & fx["away_score"].notna()
+    return fx, n_filled, corrections

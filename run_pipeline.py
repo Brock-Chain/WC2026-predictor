@@ -6,6 +6,8 @@ Usage:
     python run_pipeline.py predict "Brazil" "Haiti"   # single-fixture demo
     python run_pipeline.py report      # render WC2026 HTML deliverable
     python run_pipeline.py all         # data -> fit -> report
+    python run_pipeline.py update      # re-download live data -> refit -> report
+                                       # (keeps the page fresh during the tournament)
 
 Backtesting is driven from notebooks/03_backtest.ipynb (it refits per fold and
 is slow); see footpred.backtest for the API.
@@ -16,7 +18,7 @@ from __future__ import annotations
 import sys
 
 from footpred import data, model, predict, report
-from footpred.fixtures import check_team_names, load_fixtures
+from footpred.fixtures import check_team_names, load_fixtures, sync_played_results
 
 
 def cmd_data():
@@ -52,6 +54,17 @@ def cmd_report():
     idata = model.load_trace()
     teams = list(idata.attrs["teams"])
     fx = load_fixtures()
+    # Pull authoritative played scores from the live dataset (corrects any
+    # hand-entered scores in the schedule file).
+    try:
+        matches = data.load_processed()
+        fx, n_filled, corrections = sync_played_results(fx, matches)
+        if n_filled:
+            print(f"[sync] filled {n_filled} played result(s) from live data")
+        for teams_s, old, new in corrections:
+            print(f"[sync] corrected {teams_s}: {old} -> {new}")
+    except FileNotFoundError:
+        print("[warn] no processed data; using scores as stored in fixtures CSV")
     missing = check_team_names(fx, teams)
     if missing:
         print(f"[warn] {len(missing)} fixture teams unseen in training window: "
@@ -77,6 +90,10 @@ def main(argv: list[str]) -> int:
         cmd_report()
     elif cmd == "all":
         cmd_data(); cmd_fit(); cmd_report()
+    elif cmd == "update":
+        # Refresh the live data, refit on the new results, regenerate the page.
+        data.build_dataset(force_download=True)
+        cmd_fit(); cmd_report()
     else:
         print(__doc__)
         return 1
