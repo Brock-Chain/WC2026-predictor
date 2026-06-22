@@ -156,6 +156,8 @@ def bayes_factory(
     chains: int = 2,
     half_life_years: float | None = None,
     importance: bool = False,
+    dixon_coles: bool = False,
+    confederation_layer: bool = False,
 ) -> Factory:
     """Refit the PyMC model on each fold's training data. Expensive — use few
     folds. Returns a predict_proba over (home, away, neutral).
@@ -163,6 +165,8 @@ def bayes_factory(
     ``half_life_years`` / ``importance`` enable likelihood weighting (passed
     through to :func:`footpred.model.fit`). The time-decay clock is referenced
     per fold to the latest training match, so there is no leakage.
+    ``dixon_coles`` / ``confederation_layer`` toggle the low-score correction
+    and the confederation hierarchy.
     """
     from . import model as M
     from .predict import predict as _predict
@@ -171,6 +175,7 @@ def bayes_factory(
         idata = M.fit(
             train, draws=draws, tune=tune, chains=chains,
             half_life_years=half_life_years, importance=importance,
+            dixon_coles=dixon_coles, confederation_layer=confederation_layer,
         )
         teams = list(idata.attrs["teams"])
 

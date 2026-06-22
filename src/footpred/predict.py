@@ -128,8 +128,22 @@ def predict(
     k = np.arange(max_goals + 1)
     pmf_h = poisson.pmf(k[None, :], lam_h[:, None])   # [S, G+1]
     pmf_a = poisson.pmf(k[None, :], lam_a[:, None])   # [S, G+1]
-    # Outer product per draw -> [S, G+1, G+1] -> mean over draws.
-    grid = np.einsum("si,sj->ij", pmf_h, pmf_a) / pmf_h.shape[0]
+
+    if "rho" in idata.posterior:
+        # Dixon-Coles: per-draw grid with the tau correction on the four
+        # low-score cells, renormalized per draw, then averaged.
+        rho = _flatten_posterior(idata, "rho")             # [S]
+        g = pmf_h[:, :, None] * pmf_a[:, None, :]           # [S, G+1, G+1]
+        g[:, 0, 0] *= (1.0 - lam_h * lam_a * rho)
+        g[:, 0, 1] *= (1.0 + lam_h * rho)
+        g[:, 1, 0] *= (1.0 + lam_a * rho)
+        g[:, 1, 1] *= (1.0 - rho)
+        g = np.clip(g, 0.0, None)
+        g /= g.sum(axis=(1, 2), keepdims=True)
+        grid = g.mean(axis=0)
+    else:
+        # Independent double-Poisson: average the per-draw outer products.
+        grid = np.einsum("si,sj->ij", pmf_h, pmf_a) / pmf_h.shape[0]
     grid = grid / grid.sum()  # renormalize (truncation at max_goals)
 
     return Prediction(
