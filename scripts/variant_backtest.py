@@ -59,9 +59,9 @@ def run():
     epm = elo.per_match
     rows["elo"] = {
         **elo.summary(),
-        "accuracy": round(float(
+        "accuracy": round(float((
             epm[["p_home", "p_draw", "p_away"]].to_numpy().argmax(1)
-            == epm["actual"].to_numpy()).mean(), 4),
+            == epm["actual"].to_numpy()).mean()), 4),
         "draw_pred_rate": round(float(epm["p_draw"].mean()), 4),
         "draw_actual_rate": round(float((epm["actual"] == 1).mean()), 4),
     }
