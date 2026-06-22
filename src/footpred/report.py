@@ -22,6 +22,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .predict import Prediction, predict
@@ -109,14 +110,44 @@ def _pct(x: float) -> str:
     return f"{x * 100:.0f}%"
 
 
+def _goal_breakdown(pred: Prediction):
+    """Derive richer goal markets from the scoreline grid: both-teams-to-score
+    and over 1.5 / 2.5 / 3.5, plus a short qualitative tone."""
+    g = pred.grid
+    n = g.shape[0]
+    totals = np.add.outer(np.arange(n), np.arange(n))
+    btts = float(g[1:, 1:].sum())
+    o15 = float(g[totals >= 2].sum())
+    o25 = float(g[totals >= 3].sum())
+    o35 = float(g[totals >= 4].sum())
+    exp_total = pred.exp_home_goals + pred.exp_away_goals
+    if exp_total >= 2.9:
+        tone = "open, high-scoring"
+    elif exp_total <= 1.9:
+        tone = "tight, low-scoring"
+    else:
+        tone = "balanced"
+    return dict(btts=btts, o15=o15, o25=o25, o35=o35, tone=tone)
+
+
 def _bar_html(p: Prediction) -> str:
-    segs = [("h", p.p_home_win, "Home win"), ("d", p.p_draw, "Draw"),
-            ("a", p.p_away_win, "Away win")]
+    # Outcome is encoded by THREE non-color cues (for colorblind safety):
+    # fixed position (home left / draw mid / away right), a letter glyph, and
+    # a texture (set in CSS) — so the bar is readable without hue perception.
+    segs = [("h", "H", p.p_home_win, "Home win"),
+            ("d", "X", p.p_draw, "Draw"),
+            ("a", "A", p.p_away_win, "Away win")]
     parts = []
-    for cls, val, lab in segs:
-        label = _pct(val) if val >= 0.12 else ""
+    for cls, glyph, val, lab in segs:
+        if val >= 0.14:
+            label = f"{glyph} {_pct(val)}"
+        elif val >= 0.07:
+            label = _pct(val)
+        else:
+            label = ""
         parts.append(
             f"<div class='seg {cls}' style='width:{val*100:.2f}%' "
+            f"role='img' aria-label='{lab}: {_pct(val)}' "
             f"title='{lab}: {_pct(val)}'>{label}</div>"
         )
     return f"<div class='bar'>{''.join(parts)}</div>"
@@ -147,6 +178,7 @@ def _heatmap_html(p: Prediction, actual: tuple[int, int] | None = None) -> str:
                 klass += " hm-actual"
             cells.append(
                 f"<div class='{klass}' style='--a:{alpha:.3f}' "
+                f"data-s='{i}&#8211;{j}' data-p='{_pct(v)}' "
                 f"title='{i}–{j}: {_pct(v)}'></div>"
             )
     cells.append("</div>")
@@ -171,8 +203,23 @@ def _match_card(row, pred: Prediction | None) -> str:
 
     mi, mj, mp = pred.top_scorelines(1)[0]
     conf_lbl, conf_cls = _confidence(pred)
+    fav = _result_label(pred)
     state = "played" if played else "upcoming"
     actual = (int(row.home_score), int(row.away_score)) if played else None
+    teams_attr = f"{row.home_team} {row.away_team}".lower()
+
+    # The "draw paradox": the single most-likely score is a tie, yet the summed
+    # 1X2 mass favours one side. Flag it with an explained info marker.
+    paradox = ""
+    if mi == mj and fav != "draw":
+        fav_team = row.home_team if fav == "home" else row.away_team
+        fav_p = pred.p_home_win if fav == "home" else pred.p_away_win
+        paradox = (
+            f"<span class='info' tabindex='0' title='The single most likely "
+            f"exact score is a {mi}&#8211;{mj} draw, but adding up every winning "
+            f"scoreline, {html.escape(fav_team)} is favoured at {_pct(fav_p)}.'>"
+            f"&#9432;</span>"
+        )
 
     # Headline: predicted modal scoreline, or actual result if played.
     if played:
@@ -185,21 +232,28 @@ def _match_card(row, pred: Prediction | None) -> str:
                     f"&middot; {badge}</span></div>")
     else:
         headline = (f"<div class='headline'><span class='score pred'>{mi}&#8211;{mj}"
-                    f"</span><span class='hl-sub'>most likely &middot; {_pct(mp)} "
+                    f"</span>{paradox}<span class='hl-sub'>most likely &middot; {_pct(mp)} "
                     f"&middot; <span class='chip {conf_cls}'>{conf_lbl}</span></span></div>")
 
+    gb = _goal_breakdown(pred)
     stats = (
         f"<div class='row'>"
         f"<span title='Model-projected goals (Poisson mean), not shot-based xG'>"
         f"Proj. <b>{pred.exp_home_goals:.2f}&#8211;{pred.exp_away_goals:.2f}</b></span>"
-        f"<span>Over 2.5 <b>{_pct(pred.p_over_2_5)}</b></span>"
+        f"<span class='tone'>{gb['tone']}</span>"
         f"<span class='venue' title='Neutral venue = no home advantage applied'>"
         f"{'Neutral' if pred.neutral else 'Host (home)'}</span>"
+        f"</div>"
+        f"<div class='goals' title='Derived from the full scoreline grid'>"
+        f"<span>O1.5 <b>{_pct(gb['o15'])}</b></span>"
+        f"<span>O2.5 <b>{_pct(gb['o25'])}</b></span>"
+        f"<span>O3.5 <b>{_pct(gb['o35'])}</b></span>"
+        f"<span title='Both teams to score'>BTTS <b>{_pct(gb['btts'])}</b></span>"
         f"</div>"
     )
 
     return (
-        f"<div class='match' data-state='{state}'>"
+        f"<div class='match' data-state='{state}' data-teams='{html.escape(teams_attr)}'>"
         f"<div class='m-top'><span class='teams'>{home} "
         f"<span class='vs'>v</span> {away}</span>"
         f"<span class='meta'>{date}</span></div>"
@@ -244,6 +298,61 @@ def _group_forecast_html(adv: dict | None, played_n: int, total_n: int) -> str:
         f"<span class='gf-note'>{note}</span></div>"
         f"{''.join(items)}"
         f"</div>"
+    )
+
+
+def _strength_section(idata, fixtures: pd.DataFrame) -> str:
+    """What the model learned: each WC2026 team's latent attack and defense
+    (posterior means). This is the engine behind every projected scoreline —
+    surfacing it explains *why* a given goal count is expected."""
+    teams_all = list(idata.attrs.get("teams", idata.posterior["team"].values))
+    atk = idata.posterior["atk"].mean(("chain", "draw")).values
+    deff = idata.posterior["def"].mean(("chain", "draw")).values
+    strength = {t: (float(atk[i]), float(deff[i])) for i, t in enumerate(teams_all)}
+
+    wc_teams = sorted(set(fixtures["home_team"]) | set(fixtures["away_team"]))
+    rows = [(t, strength[t][0], strength[t][1]) for t in wc_teams if t in strength]
+    if not rows:
+        return ""
+
+    a_vals = [r[1] for r in rows]
+    d_vals = [r[2] for r in rows]
+    a_lo, a_hi = min(a_vals), max(a_vals)
+    d_lo, d_hi = min(d_vals), max(d_vals)
+
+    def norm(v, lo, hi):
+        return 0.0 if hi <= lo else (v - lo) / (hi - lo)
+
+    # Sort by overall quality (attack + defense are both "higher = better").
+    rows.sort(key=lambda r: -(r[1] + r[2]))
+
+    items = []
+    for rank, (team, a, d) in enumerate(rows, 1):
+        items.append(
+            f"<div class='st-row'>"
+            f"<span class='st-rank'>{rank}</span>"
+            f"<span class='st-team'>{_flag(team)} {html.escape(team)}</span>"
+            f"<span class='st-bars'>"
+            f"<span class='st-bar' title='Attack rating'>"
+            f"<span class='st-fill atk' style='width:{norm(a,a_lo,a_hi)*100:.0f}%'></span></span>"
+            f"<span class='st-bar' title='Defense rating'>"
+            f"<span class='st-fill def' style='width:{norm(d,d_lo,d_hi)*100:.0f}%'></span></span>"
+            f"</span></div>"
+        )
+
+    return (
+        "<section class='insight' id='insight'>"
+        "<div class='g-head' onclick=\"toggleInsight()\">"
+        "<h2>What the model learned &middot; team strength</h2>"
+        "<span class='g-toggle'>&#9662;</span></div>"
+        "<div class='insight-body' id='insight-body'>"
+        "<p class='insight-sub'>Latent <b class='lbl-atk'>attack</b> and "
+        "<b class='lbl-def'>defense</b> strengths (posterior means, ranked by "
+        "overall quality). These are the parameters the model fits from goals — "
+        "the reason behind every projected scoreline. Bars are relative to the "
+        "WC2026 field.</p>"
+        f"<div class='st-grid'>{''.join(items)}</div>"
+        "</div></section>"
     )
 
 
@@ -353,6 +462,33 @@ def render_report(
         )
         sections.append(sec)
 
+    # Chronological "Upcoming" view: every unplayed match across all groups,
+    # ordered by date (preds is already date-sorted) and split by day. Shown
+    # only under the Upcoming filter; the grouped view stays for All/Results.
+    upcoming_rp = [(r, p) for r, p in preds
+                   if p is not None and not getattr(r, "played", False)]
+    chrono_days: list[list] = []
+    cur_day = None
+    for r, p in upcoming_rp:
+        day = pd.Timestamp(r.date).strftime("%Y-%m-%d") if pd.notna(r.date) else "?"
+        if day != cur_day:
+            label = (pd.Timestamp(r.date).strftime("%a &middot; %b %d")
+                     if pd.notna(r.date) else "Date TBD")
+            chrono_days.append([label, []])
+            cur_day = day
+        chrono_days[-1][1].append(_match_card(r, p))
+    chrono_body = "".join(
+        f"<div class='chrono-day'>{label}</div>"
+        f"<div class='cards'>{''.join(cards)}</div>"
+        for label, cards in chrono_days
+    )
+    chrono_html = (
+        "<section class='chrono' id='chrono-upcoming'>"
+        "<div class='chrono-head'><h2>Upcoming matches</h2>"
+        "<span class='chrono-sub'>chronological &middot; soonest first</span></div>"
+        f"{chrono_body}</section>"
+    )
+
     nav_pills = "".join(
         f"<a class='pill' href='#grp-{g}'>{g}</a>" for g in group_letters
     )
@@ -367,7 +503,7 @@ def render_report(
         f"<div class='tile'><div class='t-val'>{metrics['bayes_rps']:.3f}</div>"
         f"<div class='t-lab'>RPS &middot; {rps_edge:.0f}% better than Elo</div></div>"
         f"<div class='tile'><div class='t-val'>{n_upcoming}</div>"
-        f"<div class='t-lab'>matches still to predict</div></div>"
+        f"<div class='t-lab'>matches still to play</div></div>"
         f"<div class='tile'><div class='t-val good'>&#10003;</div>"
         f"<div class='t-lab'>{html.escape(metrics['calibration'])}</div></div>"
         f"</div>"
@@ -392,6 +528,9 @@ def render_report(
         "<button class='f-btn' data-filter='upcoming' onclick=\"setFilter('upcoming',this)\">Upcoming</button>"
         "<button class='f-btn' data-filter='played' onclick=\"setFilter('played',this)\">Results</button>"
         "</div>"
+        "<input id='search' class='search' type='search' autocomplete='off' "
+        "placeholder='Search a team…' aria-label='Search for a team' "
+        "oninput='searchTeams(this.value)'>"
         f"<div class='pills'>{nav_pills}</div>"
         "</div></nav>"
         "<main class='wrap'>"
@@ -401,13 +540,17 @@ def render_report(
         "outlined cell = most-likely score"
         " (<span class='sw-mode'></span>), green ring = actual result"
         " (<span class='sw-actual'></span>).</div>"
+        f"{_strength_section(idata, fixtures)}"
+        f"<div class='no-results' id='no-results'>No matches for that team.</div>"
         f"{''.join(sections)}"
+        f"{chrono_html}"
         "<footer>Double-Poisson with hierarchical attack/defense strengths and "
         "neutral-gated home advantage, fit via MCMC (PyMC/nutpie). "
         "Backtest beats Elo on RPS, log-loss and Brier. "
         "Source: martj42/international_results (CC0). "
         "Knockout fixtures are added once group standings are final.</footer>"
         "</main>"
+        "<div id='tip' class='tip' role='tooltip'></div>"
         f"<script>{_JS}</script>"
         "</body></html>"
     )
@@ -535,8 +678,15 @@ main{padding:24px 0 70px}
 .bar{display:flex;height:24px;border-radius:7px;overflow:hidden;font-size:11.5px;
  font-weight:700;margin-bottom:12px}
 .seg{display:flex;align-items:center;justify-content:center;color:#06101f;
- min-width:0;overflow:hidden;white-space:nowrap}
-.seg.h{background:var(--home)}.seg.d{background:var(--draw)}.seg.a{background:var(--away)}
+ min-width:0;overflow:hidden;white-space:nowrap;border-right:1px solid rgba(6,16,31,.35)}
+.seg:last-child{border-right:0}
+/* colorblind safety: each outcome also carries a distinct texture, so the bar
+   is decodable by texture + fixed position even without hue perception. */
+.seg.h{background-color:var(--home)}
+.seg.d{background-color:var(--draw);
+ background-image:repeating-linear-gradient(45deg,rgba(6,16,31,.16) 0 2px,transparent 2px 6px)}
+.seg.a{background-color:var(--away);
+ background-image:radial-gradient(rgba(6,16,31,.22) 1px,transparent 1.6px);background-size:6px 6px}
 .m-body{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .m-left{min-width:0}
 .headline{margin-bottom:8px}
@@ -548,9 +698,56 @@ main{padding:24px 0 70px}
 .c-strong{background:rgba(52,211,153,.16);color:var(--home)}
 .c-lean{background:rgba(251,191,36,.16);color:var(--draw)}
 .c-open{background:rgba(138,151,166,.16);color:var(--muted)}
-.row{display:flex;flex-wrap:wrap;gap:10px 14px;color:var(--muted);font-size:12.5px}
+.row{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--muted);font-size:12.5px;
+ align-items:center}
 .row b{color:var(--ink)}
 .venue{color:var(--faint)}
+.tone{font-size:11px;font-weight:700;color:var(--accent);background:rgba(96,165,250,.12);
+ padding:1px 8px;border-radius:20px}
+.goals{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:11.5px;
+ margin-top:6px}
+.goals b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* draw-paradox info marker */
+.info{display:inline-block;margin-left:6px;color:var(--accent);cursor:help;
+ font-size:14px;vertical-align:2px;font-weight:700}
+.info:hover,.info:focus{color:#bfe3ff;outline:none}
+
+/* team-strength insight section */
+.insight{margin:18px 0 6px}
+.insight .g-head{margin-bottom:0}
+.insight.collapsed .insight-body{display:none}
+.insight-sub{color:var(--muted);font-size:12.5px;margin:12px 0 14px;max-width:760px}
+.lbl-atk{color:var(--home)}.lbl-def{color:var(--accent)}
+.st-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 26px}
+.st-row{display:grid;grid-template-columns:20px 1fr 96px;align-items:center;gap:9px;
+ padding:3px 0;font-size:12.5px}
+.st-rank{color:var(--faint);font-size:11px;text-align:right;font-variant-numeric:tabular-nums}
+.st-team{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-bars{display:flex;flex-direction:column;gap:3px}
+.st-bar{height:5px;background:var(--bg2);border-radius:3px;overflow:hidden}
+.st-fill{display:block;height:100%;border-radius:3px}
+.st-fill.atk{background:var(--home)}
+.st-fill.def{background:var(--accent)}
+
+/* search box + states */
+.search{appearance:none;background:var(--card);border:1px solid var(--line2);
+ color:var(--ink);font:inherit;font-size:13px;padding:7px 12px;border-radius:9px;
+ width:180px;outline:none}
+.search:focus{border-color:var(--accent)}
+.search::placeholder{color:var(--faint)}
+.match.search-hide{display:none}
+.group.search-empty,.chrono.search-empty{display:none}
+body.searching .gforecast,body.searching .insight{display:none}
+.no-results{display:none;color:var(--muted);text-align:center;padding:30px;font-size:14px}
+body.searching.no-hits .no-results{display:block}
+
+/* custom heatmap tooltip */
+.tip{position:fixed;z-index:50;pointer-events:none;opacity:0;transition:opacity .08s;
+ background:#06101f;color:var(--ink);border:1px solid var(--line2);border-radius:8px;
+ padding:5px 9px;font-size:12px;font-weight:600;box-shadow:var(--shadow);white-space:nowrap}
+.tip.on{opacity:1}
+.tip .tip-p{color:var(--accent)}
 
 /* heatmap */
 .hm{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;width:152px;flex:none}
@@ -574,10 +771,25 @@ body[data-filter='upcoming'] .match[data-state='played']{display:none}
 body[data-filter='played'] .match[data-state='upcoming']{display:none}
 body[data-filter='played'] .match[data-state='skip']{display:none}
 
+/* chronological upcoming view (flat, across groups; replaces the grouped
+   sections only under the Upcoming filter) */
+.chrono{display:none}
+body[data-filter='upcoming'] .chrono{display:block}
+body[data-filter='upcoming'] section.group{display:none}
+body[data-filter='upcoming'] .pills{display:none}
+.chrono-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+ border-bottom:1px solid var(--line);padding-bottom:8px;margin:6px 0 4px}
+.chrono-head h2{font-size:19px;margin:0;font-weight:700}
+.chrono-sub{color:var(--faint);font-size:12px}
+.chrono-day{font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;
+ letter-spacing:.06em;margin:18px 0 10px}
+
 @media(max-width:760px){
  .tiles{grid-template-columns:repeat(2,1fr)}
  .callouts{grid-template-columns:1fr}
  .cards{grid-template-columns:1fr}
+ .st-grid{grid-template-columns:1fr}
+ .search{width:100%;order:3}
 }
 """
 
@@ -590,6 +802,25 @@ function setFilter(f,btn){
 function toggleGroup(g){
   document.getElementById('grp-'+g).classList.toggle('collapsed');
 }
+function toggleInsight(){
+  document.getElementById('insight').classList.toggle('collapsed');
+}
+// Team search: filter match cards across groups + chrono, hide empty sections.
+function searchTeams(q){
+  q=q.trim().toLowerCase();
+  document.body.classList.toggle('searching', q.length>0);
+  document.querySelectorAll('.match').forEach(m=>{
+    const hit = !q || (m.dataset.teams||'').indexOf(q)>=0;
+    m.classList.toggle('search-hide', !hit);
+  });
+  let anyGlobal=false;
+  document.querySelectorAll('section.group, section.chrono').forEach(s=>{
+    const any=[...s.querySelectorAll('.match')].some(m=>!m.classList.contains('search-hide'));
+    s.classList.toggle('search-empty', q && !any);
+    if(any) anyGlobal=true;
+  });
+  document.body.classList.toggle('no-hits', q.length>0 && !anyGlobal);
+}
 // active pill on scroll
 const pills=[...document.querySelectorAll('.pill')];
 const obs=new IntersectionObserver((es)=>{
@@ -599,4 +830,14 @@ const obs=new IntersectionObserver((es)=>{
   }});
 },{rootMargin:'-45% 0px -50% 0px'});
 document.querySelectorAll('section.group').forEach(s=>obs.observe(s));
+// custom heatmap tooltip (instant, mobile-friendly fallback keeps native title)
+const tip=document.getElementById('tip');
+function moveTip(e){ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; }
+document.addEventListener('mouseover',e=>{
+  const c=e.target.closest('.hm-c'); if(!c) return;
+  tip.innerHTML="<span class='tip-s'>"+c.dataset.s+"</span> &middot; <span class='tip-p'>"+c.dataset.p+"</span>";
+  tip.classList.add('on'); moveTip(e);
+});
+document.addEventListener('mousemove',e=>{ if(tip.classList.contains('on')) moveTip(e); });
+document.addEventListener('mouseout',e=>{ if(e.target.closest('.hm-c')) tip.classList.remove('on'); });
 """
