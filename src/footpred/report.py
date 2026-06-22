@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from .predict import Prediction, predict
-from .simulate import simulate_advancement
+from .simulate import simulate_advancement, simulate_tournament
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = PROJECT_ROOT / "wc2026_predictions.html"
@@ -292,6 +292,64 @@ def _group_forecast_html(adv: dict | None, played_n: int, total_n: int) -> str:
     )
 
 
+def _build_adv_prob(idata, wc_teams: list[str], teams: list[str]):
+    """NxN matrix: P(team i beats team j) in a neutral knockout, i.e. regulation
+    win probability plus a coin-flip shootout on draws. Indexed by wc_teams."""
+    n = len(wc_teams)
+    adv = np.full((n, n), 0.5)
+    known = set(teams)
+    for i in range(n):
+        if wc_teams[i] not in known:
+            continue
+        for j in range(i + 1, n):
+            if wc_teams[j] not in known:
+                continue
+            p = predict(idata, wc_teams[i], wc_teams[j], neutral=True, teams=teams)
+            adv[i, j] = p.p_home_win + 0.5 * p.p_draw
+            adv[j, i] = p.p_away_win + 0.5 * p.p_draw
+    return adv
+
+
+def _title_odds_section(odds: dict | None) -> str:
+    """Headline knockout deliverable: each team's simulated chance to win the
+    World Cup, reach the final, and reach the round of 16."""
+    if not odds:
+        return ""
+    rows = sorted(odds.items(), key=lambda kv: -kv[1]["p_champion"])
+    cmax = max((r["p_champion"] for _, r in rows), default=0) or 1.0
+
+    items = []
+    for rank, (team, d) in enumerate(rows, 1):
+        champ = d["p_champion"] * 100
+        w = max(champ / (cmax * 100) * 100, 1.5)
+        items.append(
+            f"<div class='to-row'>"
+            f"<span class='to-rank'>{rank}</span>"
+            f"<span class='to-team'>{_flag(team)} {html.escape(team)}</span>"
+            f"<div class='to-track' title='Win the World Cup: {champ:.1f}%'>"
+            f"<div class='to-fill' style='width:{w:.1f}%'></div>"
+            f"<span class='to-val'>{champ:.1f}%</span></div>"
+            f"<span class='to-sub' title='Reach the final'>F {d['p_final']*100:.0f}%</span>"
+            f"<span class='to-sub' title='Reach the round of 16'>R16 {d['p_r16']*100:.0f}%</span>"
+            f"</div>"
+        )
+    return (
+        "<section class='titleodds' id='titleodds'>"
+        "<div class='g-head' onclick=\"toggleTitle()\">"
+        "<h2>Title odds &middot; who wins the World Cup?</h2>"
+        "<span class='g-toggle'>&#9662;</span></div>"
+        "<div class='to-body' id='to-body'>"
+        "<p class='to-lead'>Each team's chance to lift the trophy, from "
+        "<b>20,000 simulations</b> of the whole tournament — every remaining "
+        "group match sampled from the model, then the verified knockout bracket "
+        "played out (ties resolved by extra-time/penalty coin-flip). "
+        "<span class='to-bars'>Bar = championship probability; "
+        "<b>F</b> = reach final, <b>R16</b> = reach round of 16.</span></p>"
+        f"<div class='to-grid'>{''.join(items)}</div>"
+        "</div></section>"
+    )
+
+
 def _strength_section(idata, fixtures: pd.DataFrame) -> str:
     """What the model learned: each WC2026 team's latent attack and defense
     (posterior means). This is the engine behind every projected scoreline —
@@ -516,6 +574,14 @@ def render_report(
     preds = build_predictions(idata, fixtures, teams)
     advancement = simulate_advancement(preds)
 
+    # Full-tournament title odds (champion / reach-round probabilities).
+    wc_teams = sorted(set(fixtures["home_team"]) | set(fixtures["away_team"]))
+    try:
+        adv_prob = _build_adv_prob(idata, wc_teams, teams)
+        title_odds = simulate_tournament(preds, adv_prob, wc_teams)
+    except Exception:
+        title_odds = None
+
     # Played / total counts per group (for the forecast caption).
     played_by_group: dict[str, int] = {}
     total_by_group: dict[str, int] = {}
@@ -635,6 +701,7 @@ def render_report(
         "outlined cell = most-likely score"
         " (<span class='sw-mode'></span>), green ring = actual result"
         " (<span class='sw-actual'></span>).</div>"
+        f"{_title_odds_section(title_odds)}"
         f"{_strength_section(idata, fixtures)}"
         f"<div class='no-results' id='no-results'>No matches for that team.</div>"
         f"{''.join(sections)}"
@@ -819,6 +886,26 @@ main{padding:24px 0 70px}
 .st-fill.atk{background:var(--home)}
 .st-fill.def{background:var(--accent)}
 
+/* title odds (championship probabilities) */
+.titleodds{margin:18px 0 6px}
+.titleodds .g-head{margin-bottom:0}
+.titleodds.collapsed .to-body{display:none}
+.to-lead{color:var(--muted);font-size:13px;margin:12px 0 14px;max-width:780px}
+.to-lead b{color:var(--ink)}
+.to-bars{display:block;margin-top:4px;color:var(--faint);font-size:12px}
+.to-grid{display:flex;flex-direction:column;gap:3px}
+.to-row{display:grid;grid-template-columns:24px minmax(110px,1.1fr) 2fr 44px 52px;
+ align-items:center;gap:10px;font-size:13px;padding:2px 0}
+.to-rank{color:var(--faint);font-size:11px;text-align:right;font-variant-numeric:tabular-nums}
+.to-team{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.to-track{position:relative;height:18px;background:var(--bg2);border:1px solid var(--line);
+ border-radius:5px;overflow:hidden}
+.to-fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px 0 0 5px;
+ background:linear-gradient(90deg,rgba(96,165,250,.5),rgba(52,211,153,.9))}
+.to-val{position:absolute;right:7px;top:50%;transform:translateY(-50%);font-size:11px;
+ font-weight:700;font-variant-numeric:tabular-nums}
+.to-sub{color:var(--muted);font-size:11.5px;text-align:right;font-variant-numeric:tabular-nums}
+
 /* search box + states */
 .search{appearance:none;background:var(--card);border:1px solid var(--line2);
  color:var(--ink);font:inherit;font-size:13px;padding:7px 12px;border-radius:9px;
@@ -879,10 +966,15 @@ body[data-filter='method'] .method{display:block}
 body[data-filter='method'] section.group,
 body[data-filter='method'] .chrono,
 body[data-filter='method'] .insight,
+body[data-filter='method'] .titleodds,
 body[data-filter='method'] .legend,
 body[data-filter='method'] .no-results,
 body[data-filter='method'] .pills,
 body[data-filter='method'] .search{display:none}
+/* title odds + strength are tournament-level: show only in the All view */
+body[data-filter='upcoming'] .titleodds,body[data-filter='played'] .titleodds,
+body[data-filter='upcoming'] .insight,body[data-filter='played'] .insight,
+body.searching .titleodds,body.searching .insight{display:none}
 .method h2{font-size:23px;margin:6px 0 6px}
 .m-lead{color:var(--muted);max-width:680px;margin:0 0 20px;font-size:15px}
 .m-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
@@ -914,6 +1006,8 @@ body[data-filter='method'] .search{display:none}
  .st-grid{grid-template-columns:1fr}
  .m-grid{grid-template-columns:1fr}
  .search{width:100%;order:3}
+ .to-row{grid-template-columns:20px minmax(78px,1fr) 1.5fr 42px;gap:7px}
+ .to-row .to-sub:last-child{display:none}
 }
 """
 
@@ -928,6 +1022,9 @@ function toggleGroup(g){
 }
 function toggleInsight(){
   document.getElementById('insight').classList.toggle('collapsed');
+}
+function toggleTitle(){
+  document.getElementById('titleodds').classList.toggle('collapsed');
 }
 // Team search: filter match cards across groups + chrono, hide empty sections.
 function searchTeams(q){
