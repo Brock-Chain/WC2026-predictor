@@ -150,14 +150,28 @@ def elo_factory(**elo_kwargs) -> Factory:
     return _make
 
 
-def bayes_factory(draws: int = 500, tune: int = 500, chains: int = 2) -> Factory:
+def bayes_factory(
+    draws: int = 500,
+    tune: int = 500,
+    chains: int = 2,
+    half_life_years: float | None = None,
+    importance: bool = False,
+) -> Factory:
     """Refit the PyMC model on each fold's training data. Expensive — use few
-    folds. Returns a predict_proba over (home, away, neutral)."""
+    folds. Returns a predict_proba over (home, away, neutral).
+
+    ``half_life_years`` / ``importance`` enable likelihood weighting (passed
+    through to :func:`footpred.model.fit`). The time-decay clock is referenced
+    per fold to the latest training match, so there is no leakage.
+    """
     from . import model as M
     from .predict import predict as _predict
 
     def _make(train: pd.DataFrame) -> ProbaFn:
-        idata = M.fit(train, draws=draws, tune=tune, chains=chains)
+        idata = M.fit(
+            train, draws=draws, tune=tune, chains=chains,
+            half_life_years=half_life_years, importance=importance,
+        )
         teams = list(idata.attrs["teams"])
 
         def _proba(home: str, away: str, neutral: bool = False):

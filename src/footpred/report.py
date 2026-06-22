@@ -8,7 +8,9 @@ Design goals (redesign pass):
   match (not just text chips), with the modal scoreline headlined.
 - A clear split between **validated results** (played) and **forward-looking
   predictions** (upcoming).
-- Sticky group navigation + per-group **standings tables** built from results.
+- Sticky group navigation + per-group **chance-to-advance** forecast (each
+  team's simulated probability of reaching the knockouts), replacing a
+  backward-looking standings table.
 - Flags, confidence chips, polish, and lightweight vanilla-JS interactivity
   (filter played/upcoming, collapse groups, hover tooltips).
 
@@ -23,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from .predict import Prediction, predict
+from .simulate import simulate_advancement
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = PROJECT_ROOT / "wc2026_predictions.html"
@@ -97,38 +100,6 @@ def build_predictions(idata, fixtures: pd.DataFrame, teams: list[str]):
         pred = predict(idata, r.home_team, r.away_team,
                        neutral=neutral, teams=teams)
         out.append((r, pred))
-    return out
-
-
-# --- standings -------------------------------------------------------------
-
-def compute_standings(fixtures: pd.DataFrame) -> dict[str, list[dict]]:
-    """Group letter -> sorted standings rows from *played* group matches."""
-    groups: dict[str, dict[str, dict]] = {}
-    for r in fixtures.itertuples():
-        if getattr(r, "stage", "") != "Group" or not getattr(r, "played", False):
-            continue
-        g = str(r.group)
-        tbl = groups.setdefault(g, {})
-        for team in (r.home_team, r.away_team):
-            tbl.setdefault(team, dict(team=team, P=0, W=0, D=0, L=0,
-                                      GF=0, GA=0, GD=0, Pts=0))
-        hg, ag = int(r.home_score), int(r.away_score)
-        h, a = tbl[r.home_team], tbl[r.away_team]
-        h["P"] += 1; a["P"] += 1
-        h["GF"] += hg; h["GA"] += ag; a["GF"] += ag; a["GA"] += hg
-        if hg > ag:
-            h["W"] += 1; a["L"] += 1; h["Pts"] += 3
-        elif hg < ag:
-            a["W"] += 1; h["L"] += 1; a["Pts"] += 3
-        else:
-            h["D"] += 1; a["D"] += 1; h["Pts"] += 1; a["Pts"] += 1
-    out: dict[str, list[dict]] = {}
-    for g, tbl in groups.items():
-        for row in tbl.values():
-            row["GD"] = row["GF"] - row["GA"]
-        out[g] = sorted(tbl.values(),
-                        key=lambda x: (x["Pts"], x["GD"], x["GF"]), reverse=True)
     return out
 
 
@@ -219,7 +190,8 @@ def _match_card(row, pred: Prediction | None) -> str:
 
     stats = (
         f"<div class='row'>"
-        f"<span>xG <b>{pred.exp_home_goals:.2f}&#8211;{pred.exp_away_goals:.2f}</b></span>"
+        f"<span title='Model-projected goals (Poisson mean), not shot-based xG'>"
+        f"Proj. <b>{pred.exp_home_goals:.2f}&#8211;{pred.exp_away_goals:.2f}</b></span>"
         f"<span>Over 2.5 <b>{_pct(pred.p_over_2_5)}</b></span>"
         f"<span class='venue' title='Neutral venue = no home advantage applied'>"
         f"{'Neutral' if pred.neutral else 'Host (home)'}</span>"
@@ -239,22 +211,40 @@ def _match_card(row, pred: Prediction | None) -> str:
     )
 
 
-def _standings_html(rows: list[dict]) -> str:
-    if not rows:
+def _group_forecast_html(adv: dict | None, played_n: int, total_n: int) -> str:
+    """Forward-looking replacement for a standings table: each team's
+    model-simulated chance to reach the knockouts (and to win the group)."""
+    if not adv:
         return ""
-    head = ("<tr><th class='tl'>Team</th><th>P</th><th>W</th><th>D</th>"
-            "<th>L</th><th>GD</th><th>Pts</th></tr>")
-    body = []
-    for i, r in enumerate(rows):
-        adv = "q1" if i < 2 else ("q2" if i == 2 else "")
-        body.append(
-            f"<tr class='{adv}'><td class='tl'>{_flag(r['team'])} "
-            f"{html.escape(r['team'])}</td><td>{r['P']}</td><td>{r['W']}</td>"
-            f"<td>{r['D']}</td><td>{r['L']}</td>"
-            f"<td>{r['GD']:+d}</td><td class='pts'>{r['Pts']}</td></tr>"
+    rows = sorted(adv.items(),
+                  key=lambda kv: (-kv[1]["p_advance"], -kv[1]["p_win"]))
+    items = [
+        "<div class='gf-colhead'><span class='gf-spacer'></span>"
+        "<span>adv</span><span>win</span></div>"
+    ]
+    for team, d in rows:
+        adv_pct = d["p_advance"] * 100
+        win_pct = d["p_win"] * 100
+        tier = "hi" if adv_pct >= 75 else ("mid" if adv_pct >= 40 else "lo")
+        items.append(
+            f"<div class='gf-row'>"
+            f"<span class='gf-team'>{_flag(team)} {html.escape(team)}"
+            f"<span class='gf-pts'>{d['pts']:.0f} pts</span></span>"
+            f"<div class='gf-track' title='reach knockouts: {adv_pct:.0f}%'>"
+            f"<div class='gf-fill {tier}' style='width:{max(adv_pct,2):.1f}%'></div>"
+            f"<span class='gf-adv'>{adv_pct:.0f}%</span></div>"
+            f"<span class='gf-win' title='win the group'>{win_pct:.0f}%</span>"
+            f"</div>"
         )
-    return (f"<table class='stand'><thead>{head}</thead>"
-            f"<tbody>{''.join(body)}</tbody></table>")
+    note = (f"{played_n}/{total_n} played &middot; "
+            f"top 2 + 8 best 3rd-placed advance")
+    return (
+        f"<div class='gforecast'>"
+        f"<div class='gf-head'>Chance to reach the knockouts"
+        f"<span class='gf-note'>{note}</span></div>"
+        f"{''.join(items)}"
+        f"</div>"
+    )
 
 
 def _callouts(preds) -> str:
@@ -321,7 +311,18 @@ def render_report(
     out_path = out_path or DEFAULT_OUT
     metrics = {**DEFAULT_METRICS, **(metrics or {})}
     preds = build_predictions(idata, fixtures, teams)
-    standings = compute_standings(fixtures)
+    advancement = simulate_advancement(preds)
+
+    # Played / total counts per group (for the forecast caption).
+    played_by_group: dict[str, int] = {}
+    total_by_group: dict[str, int] = {}
+    for r, _ in preds:
+        g = getattr(r, "group", "")
+        if not g:
+            continue
+        total_by_group[g] = total_by_group.get(g, 0) + 1
+        if getattr(r, "played", False):
+            played_by_group[g] = played_by_group.get(g, 0) + 1
 
     # Accuracy on played matches.
     n_played = n_correct = 0
@@ -334,7 +335,7 @@ def render_report(
                      if p is not None and not getattr(r, "played", False))
     acc_pct = (n_correct / n_played * 100) if n_played else 0
 
-    # Group sections (A..L), each: standings + cards.
+    # Group sections (A..L), each: advance forecast + cards.
     group_letters = sorted({getattr(r, "group", "") for r, _ in preds
                             if getattr(r, "group", "")})
     sections = []
@@ -346,7 +347,7 @@ def render_report(
             f"<div class='g-head' onclick=\"toggleGroup('{g}')\">"
             f"<h2>Group {g}</h2><span class='g-toggle'>&#9662;</span></div>"
             f"<div class='g-body' id='body-{g}'>"
-            f"{_standings_html(standings.get(g, []))}"
+            f"{_group_forecast_html(advancement.get(g), played_by_group.get(g, 0), total_by_group.get(g, 6))}"
             f"<div class='cards'>{''.join(cards)}</div>"
             f"</div></section>"
         )
@@ -494,17 +495,29 @@ main{padding:24px 0 70px}
 .group.collapsed .g-toggle{transform:rotate(-90deg)}
 .group.collapsed .g-body{display:none}
 
-/* standings */
-.stand{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;
- background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.stand th{color:var(--muted);font-weight:600;text-align:center;padding:9px 6px;
- background:var(--card2);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
-.stand td{text-align:center;padding:9px 6px;border-top:1px solid var(--line);
- font-variant-numeric:tabular-nums}
-.stand .tl{text-align:left;font-weight:600}
-.stand .pts{font-weight:800}
-.stand tr.q1{box-shadow:inset 3px 0 0 var(--home)}
-.stand tr.q2{box-shadow:inset 3px 0 0 var(--draw)}
+/* group forecast (chance to advance) */
+.gforecast{background:var(--card);border:1px solid var(--line);border-radius:12px;
+ padding:12px 14px 8px;margin-bottom:16px}
+.gf-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;
+ gap:6px;font-weight:700;font-size:13.5px;margin-bottom:8px}
+.gf-note{color:var(--faint);font-size:11px;font-weight:500;letter-spacing:.01em}
+.gf-colhead,.gf-row{display:grid;grid-template-columns:1fr 150px 40px;align-items:center;gap:12px}
+.gf-colhead{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.07em;
+ margin-bottom:5px}
+.gf-colhead span{text-align:right}
+.gf-row{padding:4px 0;font-size:13px}
+.gf-team{display:flex;align-items:baseline;gap:7px;font-weight:600;min-width:0;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gf-pts{color:var(--faint);font-size:11px;font-weight:500}
+.gf-track{position:relative;height:18px;background:var(--bg2);border:1px solid var(--line);
+ border-radius:5px;overflow:hidden}
+.gf-fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px 0 0 5px}
+.gf-fill.hi{background:linear-gradient(90deg,rgba(52,211,153,.45),rgba(52,211,153,.9))}
+.gf-fill.mid{background:linear-gradient(90deg,rgba(96,165,250,.4),rgba(96,165,250,.8))}
+.gf-fill.lo{background:linear-gradient(90deg,rgba(138,151,166,.3),rgba(138,151,166,.55))}
+.gf-adv{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:11px;
+ font-weight:700;font-variant-numeric:tabular-nums}
+.gf-win{text-align:right;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 
 /* match cards */
 .cards{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}

@@ -21,6 +21,7 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -180,6 +181,71 @@ def encode_matches(df: pd.DataFrame, index: TeamIndex | None = None):
     df["home_id"] = df["home_id"].astype(int)
     df["away_id"] = df["away_id"].astype(int)
     return df, index
+
+
+# --- match weighting -------------------------------------------------------
+# Two free, CC0-clean signals the backtest can switch on (both derived from
+# columns we already have — `date` and `tournament`; no new data):
+#   * time-decay     — recent matches count more (exp half-life).
+#   * importance      — competitive matches count more than friendlies.
+# Weights are mean-normalized to 1.0 so toggling a scheme changes the *shape*
+# of the likelihood, NOT its overall strength (otherwise we'd confound the
+# weighting effect with a change in how hard the prior shrinks team strengths).
+
+def _importance_weight(tournament: str) -> float:
+    """Relative match-importance tier from the tournament name (keyword match).
+
+    Scale roughly mirrors the FIFA SUM / World-Football-Elo importance ladder,
+    anchored so a friendly is the low end and a World Cup final-tournament the
+    high end. Values are pre-normalization; ``match_weights`` rescales them.
+    """
+    t = str(tournament).lower()
+    if "world cup" in t:
+        return 1.3 if "qualification" in t else 2.0      # WC quals / finals
+    if "nations league" in t:
+        return 1.0                                       # UEFA/CONCACAF NL
+    finals_kw = ("uefa euro", "copa am", "african cup of nations",
+                 "afc asian cup", "gold cup")
+    if any(k in t for k in finals_kw):
+        return 1.1 if "qualification" in t else 1.5      # continental q / finals
+    if "qualification" in t:
+        return 1.1                                       # other confed quals
+    if t == "friendly":
+        return 0.5
+    return 0.7                                            # minor cups / other
+
+
+def match_weights(
+    df: pd.DataFrame,
+    half_life_years: float | None = None,
+    importance: bool = False,
+    ref_date: "pd.Timestamp | str | None" = None,
+) -> np.ndarray:
+    """Per-match likelihood weights from ``date`` and/or ``tournament``.
+
+    Parameters
+    ----------
+    half_life_years : if set, multiply by ``0.5 ** (age / half_life)`` where
+        ``age`` is years before ``ref_date`` (default: the latest match in
+        ``df`` — leakage-free, since at train time that is "now").
+    importance : if True, multiply by the tournament-importance tier.
+    ref_date : reference "now" for the time-decay clock.
+
+    Returns a float array (len == len(df)), mean 1.0. With both options off it
+    is all-ones (identical to the unweighted likelihood).
+    """
+    n = len(df)
+    w = np.ones(n, dtype=float)
+    if importance:
+        w *= df["tournament"].map(_importance_weight).to_numpy(dtype=float)
+    if half_life_years is not None:
+        ref = pd.Timestamp(ref_date) if ref_date is not None else df["date"].max()
+        age_years = (ref - df["date"]).dt.days.to_numpy() / 365.25
+        w *= np.power(0.5, age_years / float(half_life_years))
+    total = w.sum()
+    if total > 0:
+        w *= n / total          # mean-normalize to 1.0
+    return w
 
 
 # --- persistence -----------------------------------------------------------

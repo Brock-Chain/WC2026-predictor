@@ -1,0 +1,50 @@
+[
+  {
+    "variant": "Elo (reference)",
+    "n_matches": 3634,
+    "RPS": 0.1845,
+    "log_loss": 0.9359,
+    "Brier": 0.5474,
+    "secs": 0.1
+  },
+  {
+    "variant": "Bayes baseline (unweighted)",
+    "n_matches": 3598,
+    "RPS": 0.1692,
+    "log_loss": 0.8664,
+    "Brier": 0.5091,
+    "secs": 118.0
+  },
+  {
+    "variant": "Bayes + time-decay hl=2y",
+    "n_matches": 3598,
+    "RPS": 0.169,
+    "log_loss": 0.8656,
+    "Brier": 0.5088,
+    "secs": 113.8
+  },
+  {
+    "variant": "Bayes + time-decay hl=4y",
+    "n_matches": 3598,
+    "RPS": 0.1687,
+    "log_loss": 0.8647,
+    "Brier": 0.5081,
+    "secs": 118.7
+  },
+  {
+    "variant": "Bayes + importance",
+    "n_matches": 3598,
+    "RPS": 0.1699,
+    "log_loss": 0.8688,
+    "Brier": 0.5109,
+    "secs": 125.8
+  },
+  {
+    "variant": "Bayes + importance + td hl=2y",
+    "n_matches": 3598,
+    "RPS": 0.1696,
+    "log_loss": 0.8678,
+    "Brier": 0.5101,
+    "secs": 114.7
+  }
+]

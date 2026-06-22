@@ -32,14 +32,23 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 
-from .data import TeamIndex, encode_matches
+from .data import TeamIndex, encode_matches, match_weights
 
 
-def build_model(df: pd.DataFrame, index: TeamIndex) -> pm.Model:
+def build_model(
+    df: pd.DataFrame,
+    index: TeamIndex,
+    weights: "np.ndarray | None" = None,
+) -> pm.Model:
     """Construct the PyMC model from an encoded match frame.
 
     ``df`` must contain ``home_id``, ``away_id``, ``home_score``,
     ``away_score``, ``neutral``.
+
+    If ``weights`` is given (per-match, aligned to ``df`` rows), the Poisson
+    log-likelihood of each match is scaled by its weight via ``pm.Potential``
+    (a weighted likelihood). With ``weights=None`` the model is the plain
+    unweighted double-Poisson.
     """
     home_id = df["home_id"].to_numpy()
     away_id = df["away_id"].to_numpy()
@@ -82,18 +91,26 @@ def build_model(df: pd.DataFrame, index: TeamIndex) -> pm.Model:
             - deff[home_id_]
         )
 
-        pm.Poisson(
-            "home_goals",
-            mu=pm.math.exp(log_lambda_home),
-            observed=home_goals,
-            dims="match",
-        )
-        pm.Poisson(
-            "away_goals",
-            mu=pm.math.exp(log_lambda_away),
-            observed=away_goals,
-            dims="match",
-        )
+        if weights is None:
+            pm.Poisson(
+                "home_goals",
+                mu=pm.math.exp(log_lambda_home),
+                observed=home_goals,
+                dims="match",
+            )
+            pm.Poisson(
+                "away_goals",
+                mu=pm.math.exp(log_lambda_away),
+                observed=away_goals,
+                dims="match",
+            )
+        else:
+            # Weighted likelihood: scale each match's Poisson logp by its weight.
+            w_ = pm.Data("weights", np.asarray(weights, dtype=float), dims="match")
+            home_dist = pm.Poisson.dist(mu=pm.math.exp(log_lambda_home))
+            away_dist = pm.Poisson.dist(mu=pm.math.exp(log_lambda_away))
+            pm.Potential("home_goals_w", (w_ * pm.logp(home_dist, home_goals)).sum())
+            pm.Potential("away_goals_w", (w_ * pm.logp(away_dist, away_goals)).sum())
 
     return model
 
@@ -107,6 +124,8 @@ def fit(
     target_accept: float = 0.9,
     random_seed: int = 42,
     nuts_sampler: str = "nutpie",
+    half_life_years: float | None = None,
+    importance: bool = False,
 ) -> az.InferenceData:
     """Encode, build, and sample the model. Returns an ArviZ InferenceData
     with the posterior.
@@ -114,9 +133,19 @@ def fit(
     ``nuts_sampler="nutpie"`` JIT-compiles the model via numba (LLVM) — fast
     and needs no C/C++ compiler. Falls back to PyMC's default sampler if
     nutpie is unavailable.
+
+    ``half_life_years`` / ``importance`` switch on per-match likelihood
+    weighting (time-decay and/or tournament-importance). Both off (the default)
+    reproduces the plain unweighted double-Poisson. The time-decay clock is
+    referenced to the latest match in ``df`` (leakage-free at train time).
     """
     df_enc, index = encode_matches(df, index)
-    model = build_model(df_enc, index)
+    weights = None
+    if half_life_years is not None or importance:
+        weights = match_weights(
+            df_enc, half_life_years=half_life_years, importance=importance
+        )
+    model = build_model(df_enc, index, weights=weights)
     sample_kwargs = dict(
         draws=draws,
         tune=tune,

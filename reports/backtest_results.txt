@@ -1,0 +1,13 @@
+Temporal backtest — model-variant comparison
+folds=['2023-01-01', '2024-01-01']  draws=500 tune=500 chains=2
+
+variant                                RPS  logloss   Brier   dRPS%     n   secs
+--------------------------------------------------------------------------------
+Elo (reference)                     0.1845   0.9359  0.5474          3634    0.1
+Bayes baseline (unweighted)         0.1692   0.8664  0.5091          3598  118.0
+Bayes + time-decay hl=2y             0.169   0.8656  0.5088    -0.1  3598  113.8
+Bayes + time-decay hl=4y            0.1687   0.8647  0.5081    -0.3  3598  118.7
+Bayes + importance                  0.1699   0.8688  0.5109    +0.4  3598  125.8
+Bayes + importance + td hl=2y       0.1696   0.8678  0.5101    +0.2  3598  114.7
+
+dRPS% = change vs Bayes baseline (negative = better).
