@@ -131,23 +131,13 @@ def _goal_breakdown(pred: Prediction):
 
 
 def _bar_html(p: Prediction) -> str:
-    # Outcome is encoded by THREE non-color cues (for colorblind safety):
-    # fixed position (home left / draw mid / away right), a letter glyph, and
-    # a texture (set in CSS) — so the bar is readable without hue perception.
-    segs = [("h", "H", p.p_home_win, "Home win"),
-            ("d", "X", p.p_draw, "Draw"),
-            ("a", "A", p.p_away_win, "Away win")]
+    segs = [("h", p.p_home_win, "Home win"), ("d", p.p_draw, "Draw"),
+            ("a", p.p_away_win, "Away win")]
     parts = []
-    for cls, glyph, val, lab in segs:
-        if val >= 0.14:
-            label = f"{glyph} {_pct(val)}"
-        elif val >= 0.07:
-            label = _pct(val)
-        else:
-            label = ""
+    for cls, val, lab in segs:
+        label = _pct(val) if val >= 0.12 else ""
         parts.append(
             f"<div class='seg {cls}' style='width:{val*100:.2f}%' "
-            f"role='img' aria-label='{lab}: {_pct(val)}' "
             f"title='{lab}: {_pct(val)}'>{label}</div>"
         )
     return f"<div class='bar'>{''.join(parts)}</div>"
@@ -678,15 +668,8 @@ main{padding:24px 0 70px}
 .bar{display:flex;height:24px;border-radius:7px;overflow:hidden;font-size:11.5px;
  font-weight:700;margin-bottom:12px}
 .seg{display:flex;align-items:center;justify-content:center;color:#06101f;
- min-width:0;overflow:hidden;white-space:nowrap;border-right:1px solid rgba(6,16,31,.35)}
-.seg:last-child{border-right:0}
-/* colorblind safety: each outcome also carries a distinct texture, so the bar
-   is decodable by texture + fixed position even without hue perception. */
-.seg.h{background-color:var(--home)}
-.seg.d{background-color:var(--draw);
- background-image:repeating-linear-gradient(45deg,rgba(6,16,31,.16) 0 2px,transparent 2px 6px)}
-.seg.a{background-color:var(--away);
- background-image:radial-gradient(rgba(6,16,31,.22) 1px,transparent 1.6px);background-size:6px 6px}
+ min-width:0;overflow:hidden;white-space:nowrap}
+.seg.h{background:var(--home)}.seg.d{background:var(--draw)}.seg.a{background:var(--away)}
 .m-body{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .m-left{min-width:0}
 .headline{margin-bottom:8px}
