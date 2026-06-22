@@ -44,6 +44,33 @@ def _conf_codes(teams: list[str]):
     return np.array([code[c] for c in names], dtype=int), uniq
 
 
+def _dc_rho_bounds(
+    home_goals: np.ndarray, away_goals: np.ndarray
+) -> tuple[float, float]:
+    """Valid scalar-``rho`` interval for the Dixon-Coles tau correction.
+
+    For each match the four tau cells stay positive iff::
+
+        max(-1/lam, -1/mu) <= rho <= min(1/(lam*mu), 1)
+
+    A single scalar ``rho`` must satisfy the *tightest* of these bounds over all
+    matches. We don't have fitted rates at build time, so we use the observed
+    goal counts as a rate proxy (floored away from 0 so the bounds stay finite)
+    — the posterior rates track the data closely, so this keeps tau positive in
+    practice while confining ``rho`` to the genuinely small DC range.
+    """
+    lam = np.maximum(home_goals.astype(float), 0.25)
+    mu = np.maximum(away_goals.astype(float), 0.25)
+    # 0-1 / 1-0 cells (1 + lam*rho > 0, 1 + mu*rho > 0) -> lower bound on rho.
+    lo = float(np.maximum(-1.0 / lam, -1.0 / mu).max())
+    # 0-0 / 1-1 cells (1 - lam*mu*rho > 0, 1 - rho > 0) -> upper bound on rho.
+    hi = float(np.minimum(1.0 / (lam * mu), 1.0).min())
+    # Guard against a degenerate (lo >= hi) interval.
+    if not lo < hi:
+        lo, hi = -0.1, 0.1
+    return lo, hi
+
+
 def build_model(
     df: pd.DataFrame,
     index: TeamIndex,
@@ -147,7 +174,19 @@ def build_model(
         if dixon_coles:
             # Dixon-Coles tau correction on the four low-score cells. With
             # observed (x,y) fixed, log tau is a function of the rates + rho.
-            rho = pm.Normal("rho", mu=0.0, sigma=0.1)
+            #
+            # rho must keep all four tau cells positive for *every* match:
+            #   max(-1/lam, -1/mu) <= rho <= min(1/(lam*mu), 1).
+            # A single scalar rho must satisfy the tightest of these bounds over
+            # all matches. We bound rho to that valid interval (computed from
+            # data-implied marginal rates) so tau stays positive without the
+            # log-floor clip. Without this, the previous Normal(0, 0.1) prior was
+            # swamped by the ~N-match summed log-tau Potential, and the flat
+            # `maximum(tau, 1e-6)` clip let rho drift far negative along a broken
+            # likelihood ridge (inflating the 0-0/1-1 draw cells and wrecking
+            # convergence). The genuine DC correction lives in this small range.
+            rho_lo, rho_hi = _dc_rho_bounds(home_goals, away_goals)
+            rho = pm.Uniform("rho", lower=rho_lo, upper=rho_hi)
             lam = pm.math.exp(log_lambda_home)
             mu = pm.math.exp(log_lambda_away)
             x = home_goals
@@ -164,7 +203,7 @@ def build_model(
                 + m11 * (1.0 - rho)
                 + other
             )
-            tau = pm.math.maximum(tau, 1e-6)  # keep positive for log
+            tau = pm.math.maximum(tau, 1e-6)  # numerical guard (rarely binds now)
             log_tau = pm.math.log(tau)
             if w_arr is not None:
                 log_tau = w_arr * log_tau

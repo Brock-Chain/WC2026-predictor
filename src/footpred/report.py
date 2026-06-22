@@ -145,35 +145,76 @@ def _bar_html(p: Prediction) -> str:
 
 
 def _heatmap_html(p: Prediction, actual: tuple[int, int] | None = None) -> str:
-    """A color-graded scoreline grid: rows = home goals, cols = away goals."""
+    """A color-graded scoreline grid rendered as an inline SVG.
+    Rows = home goals 0..n, columns = away goals 0..n.
+    One <rect> per cell replaces the old div-grid (~49 divs → 1 SVG + n² rects).
+    """
     g = p.grid
     n = min(HEAT_N, p.max_goals)
     sub = g[: n + 1, : n + 1]
     vmax = float(sub.max()) or 1.0
     mi, mj, _ = p.top_scorelines(1)[0]
 
-    cells = ["<div class='hm'>"]
-    # top-left corner + away-axis header
-    cells.append("<div class='hm-corner'>H\\A</div>")
-    for j in range(n + 1):
-        cells.append(f"<div class='hm-ax'>{j}</div>")
-    for i in range(n + 1):
-        cells.append(f"<div class='hm-ax'>{i}</div>")
-        for j in range(n + 1):
+    # Layout constants (SVG user-units; viewBox = "0 0 W H")
+    MARGIN_L = 16   # left margin for row-axis labels
+    MARGIN_T = 14   # top margin for col-axis labels
+    GAP = 1         # gap between cells
+    CELL = 18       # cell size
+    NCOLS = n + 1   # columns: away goals 0..n
+    NROWS = n + 1   # rows: home goals 0..n
+
+    W = MARGIN_L + NCOLS * CELL + (NCOLS - 1) * GAP
+    H = MARGIN_T + NROWS * CELL + (NROWS - 1) * GAP
+
+    parts: list[str] = [f"<svg class='hm' viewBox='0 0 {W} {H}' "
+                        f"xmlns='http://www.w3.org/2000/svg'>"]
+
+    # Corner label "H\A"
+    parts.append(
+        f"<text x='0' y='{MARGIN_T - 3}' class='hm-lbl hm-corner-lbl'"
+        f" font-size='8.5'>H\\A</text>"
+    )
+
+    # Away-axis column headers (0..n)
+    for j in range(NCOLS):
+        cx = MARGIN_L + j * (CELL + GAP) + CELL // 2
+        parts.append(
+            f"<text x='{cx}' y='{MARGIN_T - 3}' class='hm-lbl'"
+            f" text-anchor='middle' font-size='9.5'>{j}</text>"
+        )
+
+    # Home-axis row headers (0..n) + cell rects
+    for i in range(NROWS):
+        ry = MARGIN_T + i * (CELL + GAP)
+        cy_label = ry + CELL // 2 + 3   # +3 = rough visual baseline offset
+        parts.append(
+            f"<text x='{MARGIN_L - 3}' y='{cy_label}' class='hm-lbl'"
+            f" text-anchor='end' font-size='9.5'>{i}</text>"
+        )
+        for j in range(NCOLS):
             v = float(g[i, j])
-            alpha = (v / vmax) ** 0.6  # gamma for visible low cells
-            klass = "hm-c"
+            alpha = (v / vmax) ** 0.6   # gamma for visible low-prob cells
+            fill_opacity = 0.04 + alpha * 0.96
+            rx_val = MARGIN_L + j * (CELL + GAP)
+
+            stroke_attr = ""
             if i == mi and j == mj:
-                klass += " hm-mode"
+                stroke_attr += " stroke='#bfe3ff' stroke-width='1.5'"
             if actual is not None and (i, j) == actual:
-                klass += " hm-actual"
-            cells.append(
-                f"<div class='{klass}' style='--a:{alpha:.3f}' "
-                f"data-s='{i}&#8211;{j}' data-p='{_pct(v)}' "
-                f"title='{i}–{j}: {_pct(v)}'></div>"
+                # green ring overrides the mode outline when they coincide
+                stroke_attr = " stroke='#34d399' stroke-width='1.5'"
+
+            parts.append(
+                f"<rect x='{rx_val}' y='{ry}' width='{CELL}' height='{CELL}'"
+                f" rx='3' fill='#60a5fa' fill-opacity='{fill_opacity:.3f}'"
+                f"{stroke_attr}"
+                f" data-s='{i}&#8211;{j}' data-p='{_pct(v)}'>"
+                f"<title>{i}–{j}: {_pct(v)}</title>"
+                f"</rect>"
             )
-    cells.append("</div>")
-    return "".join(cells)
+
+    parts.append("</svg>")
+    return "".join(parts)
 
 
 def _match_card(row, pred: Prediction | None) -> str:
@@ -925,15 +966,11 @@ body.searching.no-hits .no-results{display:block}
 .tip.on{opacity:1}
 .tip .tip-p{color:var(--accent)}
 
-/* heatmap */
-.hm{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;width:152px;flex:none}
-.hm-corner{font-size:8.5px;color:var(--faint);display:grid;place-items:center}
-.hm-ax{font-size:9.5px;color:var(--muted);display:grid;place-items:center;
- font-variant-numeric:tabular-nums}
-.hm-c{aspect-ratio:1;border-radius:3px;
- background:rgba(96,165,250,calc(.04 + var(--a)*.96))}
-.hm-c.hm-mode{outline:1.5px solid #bfe3ff;outline-offset:-1.5px}
-.hm-c.hm-actual{box-shadow:0 0 0 1.5px var(--home) inset}
+/* heatmap — SVG-based; replaces old div-grid */
+.hm{width:152px;height:auto;flex:none;display:block}
+.hm rect{stroke-linejoin:round}
+.hm-lbl{fill:var(--muted);font-variant-numeric:tabular-nums}
+.hm-corner-lbl{fill:var(--faint)}
 
 /* skip card */
 .match.skip{border-left:3px dashed var(--line2);background:var(--card)}
@@ -1055,10 +1092,10 @@ document.querySelectorAll('section.group').forEach(s=>obs.observe(s));
 const tip=document.getElementById('tip');
 function moveTip(e){ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; }
 document.addEventListener('mouseover',e=>{
-  const c=e.target.closest('.hm-c'); if(!c) return;
+  const c=e.target.closest('[data-s]'); if(!c) return;
   tip.innerHTML="<span class='tip-s'>"+c.dataset.s+"</span> &middot; <span class='tip-p'>"+c.dataset.p+"</span>";
   tip.classList.add('on'); moveTip(e);
 });
 document.addEventListener('mousemove',e=>{ if(tip.classList.contains('on')) moveTip(e); });
-document.addEventListener('mouseout',e=>{ if(e.target.closest('.hm-c')) tip.classList.remove('on'); });
+document.addEventListener('mouseout',e=>{ if(e.target.closest('[data-s]')) tip.classList.remove('on'); });
 """
