@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .flags_svg import flag_svg
 from .predict import Prediction, predict
 from .simulate import simulate_advancement, simulate_tournament
 
@@ -67,7 +68,10 @@ HEAT_N = 6
 
 
 def _flag(team: str) -> str:
-    return FLAGS.get(team, "")
+    """Inline circular SVG flag (renders identically on every OS, unlike emoji
+    flags which degrade to letter-pairs on Windows). Sized via the .flag CSS."""
+    svg = flag_svg(team)
+    return f"<span class='flag'>{svg}</span>" if svg else ""
 
 
 def _result_label(p: Prediction) -> str:
@@ -782,6 +786,8 @@ body{margin:0;background:var(--bg);color:var(--ink);
  -webkit-font-smoothing:antialiased}
 .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
 b{font-variant-numeric:tabular-nums}
+.flag{display:inline-block;line-height:0;vertical-align:-.16em}
+.flag svg{width:1.15em;height:1.15em;display:block;border-radius:50%}
 
 /* hero */
 .hero{background:
