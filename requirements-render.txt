@@ -1,0 +1,14 @@
+# Slim dependency set to RE-RENDER the report (sync results + live-odds
+# snapshot) WITHOUT refitting the model. Used by the auto-refresh CI.
+#
+# Deliberately excludes pymc / nutpie / numba / pytensor — those are only needed
+# to *fit* the model (footpred.model imports pymc lazily). Re-rendering just
+# loads the committed trace (arviz + h5netcdf) and runs predict/simulate.
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+pyarrow>=14.0
+arviz>=0.17
+h5netcdf>=1.3
+h5py>=3.8
+requests>=2.31

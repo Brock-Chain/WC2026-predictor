@@ -28,7 +28,11 @@ import pandas as pd
 
 from .flags_svg import flag_svg
 from .predict import Prediction, predict
-from .simulate import simulate_advancement, simulate_tournament
+from .simulate import (
+    _QF, _R16, _R32, _SF,
+    simulate_advancement,
+    simulate_tournament,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = PROJECT_ROOT / "wc2026_predictions.html"
@@ -611,6 +615,320 @@ def _method_section(metrics: dict, n_teams: int) -> str:
     )
 
 
+# --- chronological view (shared by Upcoming and Results) -------------------
+
+def _chrono_section(rows_preds, section_id: str, css_class: str,
+                    title: str, sub: str) -> str:
+    """Flat chronological list (grouped by day) of the given (row, pred) pairs,
+    in kickoff order. Powers both the Upcoming and Results tabs so they look and
+    behave identically."""
+    days: list[list] = []
+    cur_day = None
+    for r, p in rows_preds:
+        day = pd.Timestamp(r.date).strftime("%Y-%m-%d") if pd.notna(r.date) else "?"
+        if day != cur_day:
+            label = (pd.Timestamp(r.date).strftime("%a &middot; %b %d")
+                     if pd.notna(r.date) else "Date TBD")
+            days.append([label, []])
+            cur_day = day
+        days[-1][1].append(_match_card(r, p))
+    body = "".join(
+        f"<div class='chrono-day'>{label}</div>"
+        f"<div class='cards'>{''.join(cards)}</div>"
+        for label, cards in days
+    )
+    if not days:
+        body = "<p class='chrono-empty'>Nothing here yet.</p>"
+    return (
+        f"<section class='chrono {css_class}' id='{section_id}'>"
+        f"<div class='chrono-head'><h2>{title}</h2>"
+        f"<span class='chrono-sub'>{sub}</span></div>"
+        f"{body}</section>"
+    )
+
+
+# --- knockout bracket ------------------------------------------------------
+
+# CSV `stage` values, in bracket order. Knockout fixtures appended to the
+# fixtures CSV (in bracket order within each stage) populate the tree; until
+# then the slots show only their source label + the model's projected occupant.
+_KO_STAGES = ["Round of 32", "Round of 16", "Quarter-final", "Semi-final", "Final"]
+
+
+def _projected_qualifiers(advancement: dict | None) -> dict:
+    """Model's projected group winner / runner-up per group (top two by chance
+    to advance). Keyed by bracket slot: ('1', G) -> (team, p_advance),
+    ('2', G) -> (team, p_advance). Used to pre-fill the bracket faintly."""
+    proj: dict = {}
+    for g, adv in (advancement or {}).items():
+        if not adv:
+            continue
+        ranked = sorted(adv.items(), key=lambda kv: -kv[1]["p_advance"])
+        if len(ranked) >= 1:
+            proj[("1", g)] = (ranked[0][0], ranked[0][1]["p_advance"])
+        if len(ranked) >= 2:
+            proj[("2", g)] = (ranked[1][0], ranked[1][1]["p_advance"])
+    return proj
+
+
+def _bk_skeleton_slot(slot, proj: dict) -> str:
+    """A bracket slot before its team is known: source label, plus the model's
+    projected occupant (faint) where we can name one."""
+    kind, val = slot
+    if kind == "3":
+        return ("<div class='bk-team empty'>"
+                "<span class='bk-src'>Best 3rd-placed</span></div>")
+    src = f"Winner {val}" if kind == "1" else f"Runner-up {val}"
+    pj = proj.get(slot)
+    if pj:
+        team, padv = pj
+        return (f"<div class='bk-team proj'><span class='bk-src'>{src}</span>"
+                f"<span class='bk-proj'>{_flag(team)} {html.escape(team)}"
+                f"<span class='bk-pp' title='projected to advance'>"
+                f"{padv*100:.0f}%</span></span></div>")
+    return f"<div class='bk-team empty'><span class='bk-src'>{src}</span></div>"
+
+
+def _bk_winner_slot(label: str) -> str:
+    return f"<div class='bk-team empty'><span class='bk-src'>{label}</span></div>"
+
+
+def _bk_actual_cell(row, pred) -> str:
+    """A knockout cell once the matchup is real (from a CSV knockout row)."""
+    home, away = row.home_team, row.away_team
+    played = bool(getattr(row, "played", False))
+
+    def team_line(name, side):
+        win = ""
+        if pred is not None:
+            # neutral knockout win prob = regulation win + coin-flip on draws
+            ph = pred.p_home_win + 0.5 * pred.p_draw
+            pa = pred.p_away_win + 0.5 * pred.p_draw
+            wp = ph if side == "home" else pa
+            win = f"<span class='bk-wp'>{wp*100:.0f}%</span>"
+        return (f"<div class='bk-team real'>"
+                f"<span class='bk-name'>{_flag(name)} {html.escape(name)}</span>"
+                f"{win}</div>")
+
+    cell = team_line(home, "home") + team_line(away, "away")
+    if played:
+        hg, ag = int(row.home_score), int(row.away_score)
+        cell += f"<div class='bk-score'>{hg}&#8211;{ag}</div>"
+    return cell
+
+
+def _bracket_section(preds, advancement: dict | None) -> str:
+    """Pre-built knockout bracket (R32 -> Final). Empty slots show their source
+    label and the model's projected occupant; real matchups appear as knockout
+    rows are added to the fixtures CSV (in bracket order per stage)."""
+    proj = _projected_qualifiers(advancement)
+
+    # Actual knockout fixtures by stage, in kickoff order (preds is sorted).
+    by_stage: dict[str, list] = {s: [] for s in _KO_STAGES}
+    for r, p in preds:
+        st = getattr(r, "stage", "")
+        if st in by_stage:
+            by_stage[st].append((r, p))
+    have_actual = any(by_stage[s] for s in _KO_STAGES)
+
+    def cell(match_html: str) -> str:
+        return f"<div class='bk-match'>{match_html}</div>"
+
+    # Round of 32 — from the verified slot structure, overlaid with actuals.
+    r32 = by_stage["Round of 32"]
+    r32_cells = []
+    for i, (sa, sb) in enumerate(_R32):
+        if i < len(r32):
+            r, p = r32[i]
+            r32_cells.append(cell(_bk_actual_cell(r, p)))
+        else:
+            r32_cells.append(cell(_bk_skeleton_slot(sa, proj)
+                                  + _bk_skeleton_slot(sb, proj)))
+
+    def downstream(stage_name, pairs, feed_label):
+        actual = by_stage[stage_name]
+        cells = []
+        for j, (a, b) in enumerate(pairs):
+            if j < len(actual):
+                r, p = actual[j]
+                cells.append(cell(_bk_actual_cell(r, p)))
+            else:
+                cells.append(cell(
+                    _bk_winner_slot(f"Winner {feed_label} {a + 1}")
+                    + _bk_winner_slot(f"Winner {feed_label} {b + 1}")))
+        return cells
+
+    r16_cells = downstream("Round of 16", _R16, "R32")
+    qf_cells = downstream("Quarter-final", _QF, "R16")
+    sf_cells = downstream("Semi-final", _SF, "QF")
+    # Final: winners of the two semis.
+    fin = by_stage["Final"]
+    if fin:
+        r, p = fin[0]
+        final_cells = [cell(_bk_actual_cell(r, p))]
+    else:
+        final_cells = [cell(_bk_winner_slot("Winner SF 1")
+                            + _bk_winner_slot("Winner SF 2"))]
+
+    cols = [
+        ("Round of 32", r32_cells),
+        ("Round of 16", r16_cells),
+        ("Quarter-finals", qf_cells),
+        ("Semi-finals", sf_cells),
+        ("Final", final_cells),
+    ]
+    col_html = "".join(
+        f"<div class='bk-col'><div class='bk-col-h'>{name}</div>"
+        f"{''.join(cells)}</div>"
+        for name, cells in cols
+    )
+
+    note = ("Real matchups appear here as knockout fixtures are confirmed. "
+            if not have_actual else "")
+    lead = (
+        "<p class='bk-lead'>The verified WC2026 knockout tree. "
+        f"{note}Empty slots show the model's <b class='bk-proj-lbl'>projected</b> "
+        "qualifier (top two per group by chance to advance); "
+        "<b>Best 3rd-placed</b> slots are cross-group and filled once the "
+        "eight qualifying third places are known.</p>"
+    )
+    return (
+        "<section class='bracket' id='bracket'>"
+        "<div class='bk-head'><h2>Knockout bracket</h2></div>"
+        f"{lead}"
+        f"<div class='bk-scroll'>{col_html}</div>"
+        "</section>"
+    )
+
+
+# --- "Model vs Market" (Polymarket) tab ------------------------------------
+
+def _poly_blob(preds, title_odds, odds_meta, asof: str):
+    """Merge our model probabilities with the resolved Polymarket identifiers
+    into the JSON blob baked into the page. The page's JS fetches live prices
+    for these slugs; the snapshot is the offline fallback. Returns None if there
+    is nothing to compare (no odds resolved)."""
+    if not odds_meta:
+        return None
+    matches_meta, title_meta = odds_meta
+    matches_meta = matches_meta or {}
+    title_meta = title_meta or {}
+
+    out_matches = []
+    for r, p in preds:
+        if p is None or getattr(r, "played", False):
+            continue
+        date_str = (pd.Timestamp(r.date).strftime("%Y-%m-%d")
+                    if pd.notna(r.date) else "")
+        meta = matches_meta.get((r.home_team, r.away_team, date_str))
+        if not meta:
+            continue
+        out_matches.append({
+            "home": r.home_team, "away": r.away_team, "date": date_str,
+            "slug": meta["slug"], "moreSlug": meta["more_slug"],
+            "homeGit": meta["home_git"], "drawGit": meta["draw_git"],
+            "awayGit": meta["away_git"],
+            "bttsQ": meta["btts_q"], "o25Q": meta["o25_q"],
+            "vol": meta["volume"], "snap": meta["snapshot"],
+            "model": {
+                "h": round(p.p_home_win, 4), "d": round(p.p_draw, 4),
+                "a": round(p.p_away_win, 4),
+                "btts": round(float(p.grid[1:, 1:].sum()), 4),
+                "o25": round(p.p_over_2_5, 4),
+            },
+        })
+
+    out_title = []
+    teams_meta = title_meta.get("teams", {})
+    for team, d in (title_odds or {}).items():
+        tm = teams_meta.get(team)
+        if not tm:
+            continue
+        out_title.append({"team": team, "git": tm["git"],
+                          "model": round(d["p_champion"], 4), "snap": tm["snap"]})
+    out_title.sort(key=lambda x: -x["snap"])
+
+    if not out_matches and not out_title:
+        return None
+    return {
+        "asof": asof,
+        "matches": out_matches,
+        "title": {"slug": title_meta.get("slug", "world-cup-winner"),
+                  "sum": round(title_meta.get("sum", 1.0), 5),
+                  "teams": out_title},
+    }
+
+
+def _market_section(blob) -> str:
+    """Static shell for the Model-vs-Market tab. The two tables are filled by JS
+    (from the live Gamma API, falling back to the baked snapshot); this renders
+    the disclaimer, controls, table scaffolding and footnotes."""
+    if not blob:
+        return (
+            "<section class='market' id='market'>"
+            "<div class='mk-head'><h2>Model vs Market</h2></div>"
+            "<p class='mk-lead'>Live market comparison is currently unavailable "
+            "(no open Polymarket markets resolved at build time). It returns "
+            "automatically once upcoming-match markets are live.</p>"
+            "</section>"
+        )
+
+    disclaimer = (
+        "<div class='mk-disclaimer'>"
+        "<b>Read this first — divergence is not value.</b> This tab shows where "
+        "our <b>goals-only</b> model disagrees with Polymarket's market-implied "
+        "odds. The market is liquid and prices things we can't see — lineups, "
+        "injuries, money flow — and our model is at its information ceiling. So a "
+        "gap almost always means <i>the market knows something we don't</i>, not "
+        "that there's a bet to make. Treat every row as a hypothesis about our "
+        "blind spots. <b>Informational, not betting advice.</b>"
+        "</div>"
+    )
+    controls = (
+        "<div class='mk-controls'>"
+        "<span class='mk-asof'>Odds as of <b id='mk-asof'>snapshot</b>"
+        "<span class='mk-dot' id='mk-dot' title='live'></span></span>"
+        "<button class='mk-refresh' id='mk-refresh' onclick='refreshMarket()'>"
+        "&#8635; Refresh odds</button>"
+        "</div>"
+    )
+    pm_table = (
+        "<h3 class='mk-h3'>Per-match &middot; biggest disagreements first</h3>"
+        "<div class='mk-tablewrap'><table class='mk-table'><thead><tr>"
+        "<th class='tl'>Match</th><th class='tl'>Outcome</th>"
+        "<th>Model</th><th>Market</th><th>Edge</th><th>EV</th>"
+        "<th>Vig</th><th>Vol</th></tr></thead>"
+        "<tbody id='mk-rows'></tbody></table></div>"
+        "<p class='mk-empty' id='mk-rows-empty' style='display:none'>"
+        "No open per-match markets right now.</p>"
+    )
+    title_table = (
+        "<h3 class='mk-h3'>Title odds &middot; model champion% vs the winner market"
+        "<span class='mk-sub'>~$2.9B market &middot; favourites first</span></h3>"
+        "<div class='mk-tablewrap'><table class='mk-table'><thead><tr>"
+        "<th class='tl'>Team</th><th>Model</th><th>Market</th><th>Edge</th>"
+        "</tr></thead><tbody id='mk-title'></tbody></table></div>"
+    )
+    foot = (
+        "<p class='mk-foot'>Market probabilities are de-vigged proportionally "
+        "(price &divide; sum of outcomes); <b>Edge</b> = model &minus; market in "
+        "percentage points; <b>EV</b> = model &divide; market &minus; 1 for a unit "
+        "stake. Rows where the market is thin (low volume) or the overround is "
+        "high (&gt;6%) are greyed; EV is hidden for sub-5% market prices "
+        "(favourite&#8211;longshot noise). Source: Polymarket Gamma API (keyless, "
+        "fetched live in your browser). Not affiliated with Polymarket; "
+        "educational comparison only.</p>"
+    )
+    return (
+        "<section class='market' id='market'>"
+        "<div class='mk-head'><h2>Model vs Market</h2></div>"
+        f"{disclaimer}{controls}"
+        "<div class='mk-status' id='mk-status'></div>"
+        f"{pm_table}{title_table}{foot}"
+        "</section>"
+    )
+
+
 # --- page assembly ---------------------------------------------------------
 
 def render_report(
@@ -620,6 +938,7 @@ def render_report(
     out_path: Path | None = None,
     generated_on: str = "",
     metrics: dict | None = None,
+    odds_meta=None,
 ) -> Path:
     out_path = out_path or DEFAULT_OUT
     metrics = {**DEFAULT_METRICS, **(metrics or {})}
@@ -674,32 +993,25 @@ def render_report(
         )
         sections.append(sec)
 
-    # Chronological "Upcoming" view: every unplayed match across all groups,
-    # ordered by date (preds is already date-sorted) and split by day. Shown
-    # only under the Upcoming filter; the grouped view stays for All/Results.
+    # Chronological flat views (grouped by day, kickoff order) for the Upcoming
+    # and Results tabs. The grouped per-group view stays for the All tab (where
+    # the group pills still let you jump around).
     upcoming_rp = [(r, p) for r, p in preds
                    if p is not None and not getattr(r, "played", False)]
-    chrono_days: list[list] = []
-    cur_day = None
-    for r, p in upcoming_rp:
-        day = pd.Timestamp(r.date).strftime("%Y-%m-%d") if pd.notna(r.date) else "?"
-        if day != cur_day:
-            label = (pd.Timestamp(r.date).strftime("%a &middot; %b %d")
-                     if pd.notna(r.date) else "Date TBD")
-            chrono_days.append([label, []])
-            cur_day = day
-        chrono_days[-1][1].append(_match_card(r, p))
-    chrono_body = "".join(
-        f"<div class='chrono-day'>{label}</div>"
-        f"<div class='cards'>{''.join(cards)}</div>"
-        for label, cards in chrono_days
-    )
-    chrono_html = (
-        "<section class='chrono' id='chrono-upcoming'>"
-        "<div class='chrono-head'><h2>Upcoming matches</h2>"
-        "<span class='chrono-sub'>chronological &middot; soonest first</span></div>"
-        f"{chrono_body}</section>"
-    )
+    played_rp = [(r, p) for r, p in preds
+                 if p is not None and getattr(r, "played", False)]
+    chrono_html = _chrono_section(
+        upcoming_rp, "chrono-upcoming", "chrono-up",
+        "Upcoming matches", "chronological &middot; soonest first")
+    results_html = _chrono_section(
+        played_rp, "chrono-results", "chrono-res",
+        "Results", "chronological &middot; every played match")
+    bracket_html = _bracket_section(preds, advancement)
+    poly_blob = _poly_blob(preds, title_odds, odds_meta,
+                           asof=generated_on or "snapshot")
+    market_html = _market_section(poly_blob)
+    poly_json = (json.dumps(poly_blob).replace("<", "\\u003c")
+                 if poly_blob else "null")
 
     nav_pills = "".join(
         f"<a class='pill' href='#grp-{g}'>{g}</a>" for g in group_letters
@@ -739,6 +1051,8 @@ def render_report(
         "<button class='f-btn active' data-filter='all' onclick=\"setFilter('all',this)\">All</button>"
         "<button class='f-btn' data-filter='upcoming' onclick=\"setFilter('upcoming',this)\">Upcoming</button>"
         "<button class='f-btn' data-filter='played' onclick=\"setFilter('played',this)\">Results</button>"
+        "<button class='f-btn' data-filter='bracket' onclick=\"setFilter('bracket',this)\">Bracket</button>"
+        "<button class='f-btn' data-filter='market' onclick=\"setFilter('market',this)\">Model vs Market</button>"
         "<button class='f-btn' data-filter='method' onclick=\"setFilter('method',this)\">Method</button>"
         "</div>"
         "<input id='search' class='search' type='search' autocomplete='off' "
@@ -758,6 +1072,9 @@ def render_report(
         f"<div class='no-results' id='no-results'>No matches for that team.</div>"
         f"{''.join(sections)}"
         f"{chrono_html}"
+        f"{results_html}"
+        f"{bracket_html}"
+        f"{market_html}"
         f"{_method_section(metrics, len(teams))}"
         "<footer>Double-Poisson with hierarchical attack/defense strengths and "
         "neutral-gated home advantage, fit via MCMC (PyMC/nutpie). "
@@ -766,7 +1083,9 @@ def render_report(
         "Knockout fixtures are added once group standings are final.</footer>"
         "</main>"
         "<div id='tip' class='tip' role='tooltip'></div>"
+        f"<script>window.POLY={poly_json};</script>"
         f"<script>{_JS}</script>"
+        "<script>" + _MARKET_JS + "</script>"
         "</body></html>"
     )
     out_path.write_text(doc, encoding="utf-8")
@@ -992,29 +1311,108 @@ body.searching.no-hits .no-results{display:block}
 footer{color:var(--faint);font-size:11.5px;margin-top:34px;border-top:1px solid var(--line);
  padding-top:16px;line-height:1.5}
 
-/* filter states */
-body[data-filter='upcoming'] .match[data-state='played']{display:none}
-body[data-filter='played'] .match[data-state='upcoming']{display:none}
-body[data-filter='played'] .match[data-state='skip']{display:none}
-
-/* chronological upcoming view (flat, across groups; replaces the grouped
-   sections only under the Upcoming filter) */
+/* chronological flat views (Upcoming + Results): each replaces the grouped
+   sections under its own filter. The All tab keeps the grouped view + pills. */
 .chrono{display:none}
-body[data-filter='upcoming'] .chrono{display:block}
-body[data-filter='upcoming'] section.group{display:none}
-body[data-filter='upcoming'] .pills{display:none}
+body[data-filter='upcoming'] .chrono-up{display:block}
+body[data-filter='played'] .chrono-res{display:block}
+body[data-filter='upcoming'] section.group,
+body[data-filter='played'] section.group{display:none}
+body[data-filter='upcoming'] .pills,
+body[data-filter='played'] .pills{display:none}
 .chrono-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
  border-bottom:1px solid var(--line);padding-bottom:8px;margin:6px 0 4px}
 .chrono-head h2{font-size:19px;margin:0;font-weight:700}
 .chrono-sub{color:var(--faint);font-size:12px}
 .chrono-day{font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;
  letter-spacing:.06em;margin:18px 0 10px}
+.chrono-empty{color:var(--muted);font-size:14px;padding:20px 0}
+
+/* knockout bracket */
+.bracket{display:none}
+body[data-filter='bracket'] .bracket{display:block}
+body[data-filter='bracket'] section.group,body[data-filter='bracket'] .chrono,
+body[data-filter='bracket'] .titleodds,body[data-filter='bracket'] .insight,
+body[data-filter='bracket'] .legend,body[data-filter='bracket'] .pills,
+body[data-filter='bracket'] .search,body[data-filter='bracket'] .no-results{display:none}
+.bk-head h2{font-size:23px;margin:6px 0 6px}
+.bk-lead{color:var(--muted);font-size:13.5px;max-width:760px;margin:0 0 18px}
+.bk-lead b{color:var(--ink)}.bk-proj-lbl{color:var(--accent)}
+.bk-scroll{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px}
+.bk-col{flex:0 0 188px;display:flex;flex-direction:column;gap:9px}
+.bk-col-h{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+ color:var(--accent);position:sticky;top:54px;padding:2px 0 4px}
+.bk-match{background:linear-gradient(180deg,var(--card2),var(--card));
+ border:1px solid var(--line);border-radius:10px;padding:4px;display:flex;
+ flex-direction:column;gap:3px}
+.bk-team{display:flex;align-items:center;justify-content:space-between;gap:6px;
+ padding:6px 8px;border-radius:7px;font-size:12.5px;min-height:30px}
+.bk-team.empty{color:var(--faint)}
+.bk-team.proj .bk-proj{display:flex;align-items:center;gap:5px;font-weight:600;color:var(--ink)}
+.bk-src{font-size:10.5px;color:var(--faint);font-weight:600;text-transform:uppercase;
+ letter-spacing:.04em;white-space:nowrap}
+.bk-team.proj{flex-direction:column;align-items:flex-start;gap:2px}
+.bk-pp{color:var(--muted);font-size:10.5px;font-weight:600;margin-left:2px}
+.bk-team.real{background:var(--bg2);font-weight:600}
+.bk-name{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;
+ text-overflow:ellipsis;white-space:nowrap}
+.bk-wp{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.bk-score{text-align:center;font-weight:800;font-size:14px;color:var(--accent);
+ font-variant-numeric:tabular-nums;padding:1px 0 3px}
+
+/* model vs market tab */
+.market{display:none}
+body[data-filter='market'] .market{display:block}
+body[data-filter='market'] section.group,body[data-filter='market'] .chrono,
+body[data-filter='market'] .bracket,body[data-filter='market'] .titleodds,
+body[data-filter='market'] .insight,body[data-filter='market'] .legend,
+body[data-filter='market'] .pills,body[data-filter='market'] .search,
+body[data-filter='market'] .no-results{display:none}
+.mk-head h2{font-size:23px;margin:6px 0 6px}
+.mk-lead{color:var(--muted);max-width:680px;font-size:14px}
+.mk-disclaimer{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.28);
+ border-left:3px solid var(--draw);border-radius:12px;padding:13px 16px;font-size:13px;
+ color:var(--muted);max-width:880px;margin:4px 0 16px;line-height:1.55}
+.mk-disclaimer b{color:var(--ink)}
+.mk-controls{display:flex;align-items:center;gap:14px;margin-bottom:6px;flex-wrap:wrap}
+.mk-asof{color:var(--muted);font-size:12.5px}.mk-asof b{color:var(--ink)}
+.mk-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:7px;
+ background:var(--faint);vertical-align:1px}
+.mk-dot.live{background:var(--home);box-shadow:0 0 0 3px rgba(52,211,153,.18)}
+.mk-dot.stale{background:var(--draw)}
+.mk-refresh{appearance:none;border:1px solid var(--line2);background:var(--card);
+ color:var(--ink);font:inherit;font-size:12.5px;font-weight:600;padding:6px 13px;
+ border-radius:9px;cursor:pointer}
+.mk-refresh:hover{border-color:var(--accent)}
+.mk-refresh:disabled,.mk-refresh.loading{opacity:.5;cursor:wait}
+.mk-status{color:var(--faint);font-size:12px;min-height:16px;margin:2px 0 6px}
+.mk-h3{font-size:15.5px;margin:22px 0 8px;display:flex;align-items:baseline;gap:10px;
+ flex-wrap:wrap}
+.mk-sub{color:var(--faint);font-size:11.5px;font-weight:500}
+.mk-tablewrap{overflow-x:auto}
+.mk-table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:540px}
+.mk-table th{color:var(--muted);font-weight:600;text-align:right;padding:7px 8px;
+ font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;
+ border-bottom:1px solid var(--line)}
+.mk-table th.tl,.mk-table td.tl{text-align:left}
+.mk-table td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);
+ font-variant-numeric:tabular-nums}
+.mk-match{font-weight:600;color:var(--ink)}
+.mk-table tr.mk-muted td{color:var(--faint);opacity:.55}
+.mk-table tr.mk-big td{background:rgba(96,165,250,.07)}
+.mk-pos{color:var(--home);font-weight:700}
+.mk-neg{color:var(--away);font-weight:700}
+.mk-foot{color:var(--faint);font-size:11.5px;margin-top:16px;border-top:1px solid var(--line);
+ padding-top:12px;line-height:1.55;max-width:880px}
+.mk-empty{color:var(--muted);font-size:13px}
 
 /* method tab */
 .method{display:none}
 body[data-filter='method'] .method{display:block}
 body[data-filter='method'] section.group,
 body[data-filter='method'] .chrono,
+body[data-filter='method'] .bracket,
+body[data-filter='method'] .market,
 body[data-filter='method'] .insight,
 body[data-filter='method'] .titleodds,
 body[data-filter='method'] .legend,
@@ -1024,6 +1422,7 @@ body[data-filter='method'] .search{display:none}
 /* title odds + strength are tournament-level: show only in the All view */
 body[data-filter='upcoming'] .titleodds,body[data-filter='played'] .titleodds,
 body[data-filter='upcoming'] .insight,body[data-filter='played'] .insight,
+body[data-filter='bracket'] .titleodds,body[data-filter='bracket'] .insight,
 body.searching .titleodds,body.searching .insight{display:none}
 .method h2{font-size:23px;margin:6px 0 6px}
 .m-lead{color:var(--muted);max-width:680px;margin:0 0 20px;font-size:15px}
@@ -1111,4 +1510,146 @@ document.addEventListener('mouseover',e=>{
 });
 document.addEventListener('mousemove',e=>{ if(tip.classList.contains('on')) moveTip(e); });
 document.addEventListener('mouseout',e=>{ if(e.target.closest('[data-s]')) tip.classList.remove('on'); });
+"""
+
+
+# Live "Model vs Market" logic. Reads the baked window.POLY (model probs +
+# resolved Polymarket slugs/market-ids + a price snapshot), fetches live prices
+# from the keyless Gamma API in the browser, de-vigs, computes edges, and fills
+# the two tables. No matching logic here — that was resolved at build time.
+_MARKET_JS = r"""
+(function(){
+  var P = window.POLY;
+  var rowsEl = document.getElementById('mk-rows');
+  if(!P || !rowsEl){ return; }
+  var asofEl=document.getElementById('mk-asof'), dotEl=document.getElementById('mk-dot'),
+      statusEl=document.getElementById('mk-status'), titleEl=document.getElementById('mk-title'),
+      emptyEl=document.getElementById('mk-rows-empty'), btn=document.getElementById('mk-refresh');
+  var GAMMA='https://gamma-api.polymarket.com', SERIES=11433,
+      VIG_MAX=0.06, MIN_VOL=20000, P_FLOOR=0.05, INTERVAL=600000;
+
+  function pct(x){ return (x*100).toFixed(0)+'%'; }
+  function pct1(x){ return (x*100).toFixed(1)+'%'; }
+  function pp(x){ var v=x*100; return (v>=0?'+':'')+v.toFixed(1); }
+  function evfmt(m,k){ if(k<P_FLOOR) return '—'; var ev=m/k-1; return (ev>=0?'+':'')+(ev*100).toFixed(0)+'%'; }
+  function jp(s){ try{ return typeof s==='string'?JSON.parse(s):s; }catch(e){ return null; } }
+  function esc(s){ return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function volfmt(v){ if(v>=1e6) return '$'+(v/1e6).toFixed(1)+'M'; if(v>=1e3) return '$'+(v/1e3).toFixed(0)+'K'; return '$'+(v||0).toFixed(0); }
+  function devig(arr){ var s=arr.reduce(function(a,b){return a+b;},0)||1; return {p:arr.map(function(x){return x/s;}), vig:s-1}; }
+
+  function fetchLive(){
+    var bySlug={}, stop=false;
+    function page(off){
+      if(stop) return Promise.resolve();
+      return fetch(GAMMA+'/events?series_id='+SERIES+'&closed=false&limit=100&offset='+off)
+        .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+        .then(function(b){ b.forEach(function(e){ bySlug[e.slug]=e; }); if(b.length<100) stop=true; });
+    }
+    var chain=Promise.resolve();
+    [0,100,200,300,400].forEach(function(off){ chain=chain.then(function(){ return page(off); }); });
+    var winnerP=fetch(GAMMA+'/events?slug='+P.title.slug)
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(a){ return a&&a[0]; }).catch(function(){ return null; });
+    return Promise.all([chain, winnerP]).then(function(res){ return {bySlug:bySlug, winner:res[1]}; });
+  }
+
+  function liveMatchPrices(m, bySlug){
+    var ev=bySlug[m.slug]; if(!ev||!ev.markets) return null;
+    var h=null,d=null,a=null;
+    ev.markets.forEach(function(mk){
+      var g=mk.groupItemTitle||'', pr=jp(mk.outcomePrices); if(!pr) return;
+      if(g===m.homeGit) h=+pr[0]; else if(g===m.drawGit) d=+pr[0]; else if(g===m.awayGit) a=+pr[0];
+    });
+    if(h==null||d==null||a==null) return null;
+    var out={h:h,d:d,a:a,btts:null,o25:null};
+    if(m.moreSlug && bySlug[m.moreSlug] && bySlug[m.moreSlug].markets){
+      bySlug[m.moreSlug].markets.forEach(function(mk){
+        var q=mk.question||'', pr=jp(mk.outcomePrices); if(!pr) return;
+        if(q===m.bttsQ) out.btts=[+pr[0],+pr[1]]; else if(q===m.o25Q) out.o25=[+pr[0],+pr[1]];
+      });
+    }
+    return out;
+  }
+  function snapMatch(m){
+    var s=m.snap; if(s.h==null||s.d==null||s.a==null) return null;
+    return {h:s.h,d:s.d,a:s.a, btts:(s.btts!=null?[s.btts,1-s.btts]:null), o25:(s.o25!=null?[s.o25,1-s.o25]:null)};
+  }
+
+  function buildMatchRows(get){
+    var rows=[];
+    P.matches.forEach(function(m){
+      var pr=get(m); if(!pr) return;
+      var dv=devig([pr.h,pr.d,pr.a]), pm=dv.p, vig=dv.vig;
+      var lowvol=m.vol<MIN_VOL, hivig=Math.abs(vig)>VIG_MAX, name=m.home+' v '+m.away;
+      [['Home',m.model.h,pm[0]],['Draw',m.model.d,pm[1]],['Away',m.model.a,pm[2]]].forEach(function(o){
+        rows.push({match:name,out:o[0],model:o[1],mkt:o[2],vig:vig,vol:m.vol,lowvol:lowvol,hivig:hivig,edge:o[1]-o[2]});
+      });
+      if(pr.btts){ var bs=pr.btts[0]+pr.btts[1], b=pr.btts[0]/(bs||1);
+        rows.push({match:name,out:'BTTS',model:m.model.btts,mkt:b,vig:bs-1,vol:m.vol,lowvol:lowvol,hivig:Math.abs(bs-1)>VIG_MAX,edge:m.model.btts-b}); }
+      if(pr.o25){ var os=pr.o25[0]+pr.o25[1], ov=pr.o25[0]/(os||1);
+        rows.push({match:name,out:'Over 2.5',model:m.model.o25,mkt:ov,vig:os-1,vol:m.vol,lowvol:lowvol,hivig:Math.abs(os-1)>VIG_MAX,edge:m.model.o25-ov}); }
+    });
+    rows.sort(function(x,y){ return Math.abs(y.edge)-Math.abs(x.edge); });
+    return rows;
+  }
+  function renderMatchRows(rows){
+    if(!rows.length){ rowsEl.innerHTML=''; if(emptyEl) emptyEl.style.display='block'; return; }
+    if(emptyEl) emptyEl.style.display='none';
+    rowsEl.innerHTML=rows.map(function(r){
+      var cls=((r.lowvol||r.hivig)?' mk-muted':'')+(Math.abs(r.edge)>=0.08?' mk-big':'');
+      return "<tr class='"+cls+"'><td class='tl mk-match'>"+esc(r.match)+"</td><td class='tl'>"+r.out+"</td>"
+        +"<td>"+pct(r.model)+"</td><td>"+pct(r.mkt)+"</td>"
+        +"<td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+"</td>"
+        +"<td>"+evfmt(r.model,r.mkt)+"</td><td>"+(r.vig*100).toFixed(1)+"%</td><td>"+volfmt(r.vol)+"</td></tr>";
+    }).join('');
+  }
+  function buildTitleRows(get){
+    var rows=[];
+    P.title.teams.forEach(function(t){ var mp=get(t); if(mp==null) return; rows.push({team:t.team,model:t.model,mkt:mp,edge:t.model-mp}); });
+    rows.sort(function(x,y){ return y.mkt-x.mkt; });
+    return rows;
+  }
+  function renderTitleRows(rows){
+    titleEl.innerHTML=rows.map(function(r){
+      return "<tr><td class='tl mk-match'>"+esc(r.team)+"</td><td>"+pct1(r.model)+"</td><td>"+pct1(r.mkt)
+        +"</td><td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+"</td></tr>";
+    }).join('');
+  }
+
+  function renderSnapshot(){
+    renderMatchRows(buildMatchRows(snapMatch));
+    renderTitleRows(buildTitleRows(function(t){ return t.snap!=null? t.snap/(P.title.sum||1):null; }));
+    if(asofEl) asofEl.textContent=P.asof+' (snapshot)';
+    if(dotEl) dotEl.className='mk-dot stale';
+  }
+  function renderLive(live){
+    renderMatchRows(buildMatchRows(function(m){ return liveMatchPrices(m, live.bySlug); }));
+    var tsum=0, wmap={};
+    if(live.winner&&live.winner.markets){ live.winner.markets.forEach(function(mk){ var pr=jp(mk.outcomePrices); if(pr){ wmap[mk.groupItemTitle]=+pr[0]; tsum+=(+pr[0]); } }); }
+    renderTitleRows(buildTitleRows(function(t){ var v=wmap[t.git]; return v==null?null:v/(tsum||1); }));
+    if(asofEl) asofEl.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    if(dotEl) dotEl.className='mk-dot live';
+    if(statusEl) statusEl.textContent='';
+  }
+
+  var loading=false;
+  function refresh(){
+    if(loading) return; loading=true;
+    if(btn){ btn.disabled=true; btn.classList.add('loading'); }
+    if(statusEl) statusEl.textContent='Fetching live odds…';
+    fetchLive().then(renderLive).catch(function(){
+      if(statusEl) statusEl.textContent='Live odds unavailable right now — showing the last snapshot.';
+      if(dotEl) dotEl.className='mk-dot stale';
+    }).then(function(){ loading=false; if(btn){ btn.disabled=false; btn.classList.remove('loading'); } });
+  }
+  window.refreshMarket=refresh;
+
+  renderSnapshot();                       // instant, no network
+  var warmed=false;
+  var mb=document.querySelector("button[data-filter='market']");
+  if(mb){ mb.addEventListener('click', function(){ if(!warmed){ warmed=true; refresh(); } }); }
+  setInterval(function(){
+    if(!document.hidden && document.body.getAttribute('data-filter')==='market') refresh();
+  }, INTERVAL);
+})();
 """

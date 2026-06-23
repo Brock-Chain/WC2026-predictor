@@ -38,10 +38,13 @@ src/footpred/
   backtest.py    temporal (no-leakage) backtest · RPS / log-loss / Brier · calibration
   baselines.py   Elo + naive baselines to benchmark against
   fixtures.py    WC2026 fixture loader
-  report.py      Phase 6: standalone HTML deliverable of WC2026 predictions
+  simulate.py    Monte-Carlo group advancement + full-tournament title odds
+  polymarket.py  build-time Polymarket odds resolver (optional, fail-soft)
+  report.py      standalone HTML deliverable — All / Upcoming / Results /
+                 Bracket / Model-vs-Market / Method tabs
 notebooks/       01 explore/clean · 02 fit · 03 backtest
 tests/           data-cleaning + metric correctness
-run_pipeline.py  CLI: data | fit | predict | report | all
+run_pipeline.py  CLI: data | fit | predict | report | odds | all | update | render
 ```
 
 ## Quickstart
@@ -55,6 +58,8 @@ python run_pipeline.py data                 # download + clean → data/processe
 python run_pipeline.py fit                  # fit MCMC, save models/trace.nc
 python run_pipeline.py predict "Brazil" "Haiti"
 python run_pipeline.py report               # → wc2026_predictions.html
+python run_pipeline.py odds                 # resolve live Polymarket markets
+python run_pipeline.py render               # re-download data + re-render, NO refit
 ```
 
 Run the tests with `pytest`.
@@ -102,6 +107,49 @@ zero-centered team strengths — it doesn't affect predictions.
 | 3 | `predict(team_a, team_b, neutral)` → full distribution |
 | 4 | Temporal backtest + Elo baseline + metrics/calibration |
 | 6 | **WC2026 HTML deliverable** — predictions for every match, played + upcoming |
+| 7 | **Bracket** tab, chronological **Results**, **Model vs Market**, hosting |
+
+## Model vs Market (Polymarket)
+
+A "where do we disagree with a sharp market" lens — **not** a betting tool. The
+build resolves each upcoming fixture to its Polymarket event (via the keyless
+[Gamma API](https://gamma-api.polymarket.com)) and bakes our model probabilities
++ the resolved market identifiers into the page. The page's JS then fetches
+**live** prices straight from Polymarket in your browser (CORS-open, keyless),
+de-vigs them, and shows the per-match 1X2 / BTTS / Over-2.5 and title-odds
+divergences — with a **Refresh** button and a ~10-minute auto-update.
+
+> The model is goals-only and at its information ceiling; the WC market is liquid
+> and prices things we can't see (lineups, injuries, money flow). So a divergence
+> almost always means *the market knows something we don't* — a hypothesis about
+> our blind spots, not a +EV bet. The tab says so, prominently.
+
+The resolver lives **outside** the model core and is fully fail-soft: if
+Polymarket is unreachable the tab simply degrades, and the model pipeline is
+never affected.
+
+## Hosting & auto-refresh
+
+The page is a single static file, hosted on **Vercel** (serving `public/`), with
+two independent refresh loops so it stays current with **no local runs**:
+
+- **Odds** refresh *client-side* — the browser pulls live Polymarket prices on a
+  ~10-min timer + the Refresh button. No redeploy needed.
+- **Results / forecast** refresh via a **GitHub Actions** cron
+  (`.github/workflows/refresh.yml`, every 6h + manual): it re-downloads the live
+  results feed, re-syncs played scores, regenerates the page, and pushes —
+  Vercel's Git integration auto-deploys the new static file. It **re-renders
+  only** (`run_pipeline.py render`), reusing the committed `models/trace.nc`, so
+  it needs only the slim `requirements-render.txt` (no PyMC) and runs in minutes.
+
+Refitting the model (`run_pipeline.py update`) stays an occasional **local** step;
+commit the refreshed `trace.nc` when the model changes.
+
+**One-time setup:** create a Git remote, push, then in Vercel "Add New Project" →
+import the repo → Framework **Other**, Output Directory **`public`**, Build
+Command empty (already encoded in `vercel.json`). Add a GitHub repo secret only
+if you switch the workflow to deploy via the Vercel CLI; the default uses the
+push-based Git integration and needs no secrets.
 
 ## Notes
 

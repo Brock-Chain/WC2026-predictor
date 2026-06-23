@@ -2,9 +2,12 @@
 data/raw/
 data/processed/
 
-# Fitted model artifacts (large NetCDF traces)
+# Fitted model artifacts (large NetCDF traces). The *shipped* trace is committed
+# (~35 MB) so the hosting CI can re-render without an expensive MCMC refit;
+# other/experimental traces stay ignored.
 models/*.nc
 models/*.netcdf
+!models/trace.nc
 
 # Python
 .venv/

@@ -30,7 +30,6 @@ from pathlib import Path
 import arviz as az
 import numpy as np
 import pandas as pd
-import pymc as pm
 
 from .confederations import confederation
 from .data import TeamIndex, encode_matches, match_weights
@@ -96,6 +95,8 @@ def build_model(
     shrink toward their **confederation** mean (AFC/CAF/.../Other) instead of a
     single global mean — informative regularization for rarely-seen teams.
     """
+    import pymc as pm  # heavy; imported lazily so load_trace/predict/report
+
     home_id = df["home_id"].to_numpy()
     away_id = df["away_id"].to_numpy()
     home_goals = df["home_score"].to_numpy()
@@ -241,6 +242,8 @@ def fit(
     ``dixon_coles`` / ``confederation_layer`` enable the low-score correction
     and the confederation hierarchy (see :func:`build_model`).
     """
+    import pymc as pm  # heavy; imported lazily (only fitting needs PyMC)
+
     df_enc, index = encode_matches(df, index)
     weights = None
     if half_life_years is not None or importance:

@@ -1,0 +1,56 @@
+name: Refresh predictions
+
+# Auto-refresh the hosted page WITHOUT any local run. On a schedule (and on
+# demand) this re-downloads the live results feed, re-syncs played scores,
+# re-runs the forecast + odds snapshot, and commits the regenerated page.
+# Vercel's Git integration redeploys the static site on the resulting push.
+#
+# This does NOT refit the model (no MCMC) — it reuses the committed trace, so
+# the job is cheap (~2-3 min) and needs only the slim render dependencies.
+# Live Polymarket odds refresh client-side in the browser, independent of this.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"      # every 6 hours (UTC)
+  workflow_dispatch: {}          # manual "Run workflow" button
+
+permissions:
+  contents: write                # allow the bot to push the regenerated page
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install render dependencies (no PyMC)
+        run: |
+          pip install -r requirements-render.txt
+          pip install -e . --no-deps
+
+      - name: Re-render (sync live results + odds snapshot; NO model refit)
+        run: |
+          python run_pipeline.py render
+          mkdir -p public
+          cp wc2026_predictions.html public/index.html
+
+      - name: Commit & push if the page changed
+        run: |
+          git config user.name  "wc2026-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/index.html wc2026_predictions.html
+          if git diff --cached --quiet; then
+            echo "No change — nothing to deploy."
+          else
+            git commit -m "Auto-refresh predictions [skip ci]"
+            git push
+          fi
