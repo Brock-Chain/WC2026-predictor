@@ -294,6 +294,19 @@ def _match_card(row, pred: Prediction | None) -> str:
         f"</div>"
     )
 
+    # Per-card "Model vs Market" expander (upcoming only). Emitted hidden; the
+    # market JS reveals + fills it only when window.POLY has a matching entry,
+    # using the SAME live fetch (or baked snapshot) as the Model-vs-Market tab.
+    expander = ""
+    if not played:
+        expander = (
+            "<div class='mvm' hidden>"
+            "<button class='mvm-toggle' onclick='toggleExpander(this)'>"
+            "Model vs Market <span class='mvm-caret'>&#9662;</span></button>"
+            "<div class='mvm-body'><div class='mvm-rows'></div>"
+            "<div class='mvm-note'></div></div></div>"
+        )
+
     return (
         f"<div class='match' data-state='{state}' data-teams='{html.escape(teams_attr)}'>"
         f"<div class='m-top'><span class='teams'>{home} "
@@ -303,7 +316,7 @@ def _match_card(row, pred: Prediction | None) -> str:
         f"<div class='m-body'>"
         f"<div class='m-left'>{headline}{stats}</div>"
         f"<div class='m-right'>{_heatmap_html(pred, actual)}</div>"
-        f"</div></div>"
+        f"</div>{expander}</div>"
     )
 
 
@@ -545,6 +558,17 @@ def _method_section(metrics: dict, n_teams: int) -> str:
     """The 'Method' tab: what the model is, the data, validation, and an honest
     record of what was tested and rejected — the portfolio narrative."""
     rps_edge = (metrics["elo_rps"] - metrics["bayes_rps"]) / metrics["elo_rps"] * 100
+    scoring_note = ""
+    if metrics.get("scored_n"):
+        scoring_note = (
+            f"<p class='m-note'>On the <b>{metrics['scored_n']}</b> WC2026 matches "
+            f"played so far it has called <b>{metrics['ou_acc']:.0f}%</b> of "
+            f"over/under-2.5 totals correctly and nailed <b>{metrics['exact_hits']}/"
+            f"{metrics['scored_n']}</b> exact final scores, placing on average "
+            f"<b>{metrics['total_mass']*100:.0f}%</b> of its probability on the "
+            f"actual goal total. These are small-sample, in-tournament numbers — "
+            f"the backtest figures are the stable measure of skill.</p>"
+        )
     return (
         "<section class='method' id='method'>"
         "<h2>How this works</h2>"
@@ -584,6 +608,7 @@ def _method_section(metrics: dict, n_teams: int) -> str:
         f"<b>{rps_edge:.0f}% better than Elo</b> ({metrics['elo_rps']:.3f}) — and "
         "is well-calibrated (predicted probabilities match observed frequencies). "
         "RPS is the standard proper score for ordered 1X2 outcomes.</p>"
+        f"{scoring_note}"
         f"{_variant_table_html()}</div>"
 
         "<div class='m-card'><h3>What we tested and rejected</h3>"
@@ -673,24 +698,29 @@ def _projected_qualifiers(advancement: dict | None) -> dict:
 
 def _bk_skeleton_slot(slot, proj: dict) -> str:
     """A bracket slot before its team is known: source label, plus the model's
-    projected occupant (faint) where we can name one."""
+    projected occupant (faint) where we can name one. Always emits a .bk-src
+    label zone and a .bk-val value zone so every slot is the same height."""
     kind, val = slot
     if kind == "3":
         return ("<div class='bk-team empty'>"
-                "<span class='bk-src'>Best 3rd-placed</span></div>")
+                "<span class='bk-src'>Best 3rd-placed</span>"
+                "<span class='bk-val'>&mdash;</span></div>")
     src = f"Winner {val}" if kind == "1" else f"Runner-up {val}"
     pj = proj.get(slot)
     if pj:
         team, padv = pj
         return (f"<div class='bk-team proj'><span class='bk-src'>{src}</span>"
-                f"<span class='bk-proj'>{_flag(team)} {html.escape(team)}"
+                f"<span class='bk-val'><span class='bk-proj'>{_flag(team)} "
+                f"{html.escape(team)}</span>"
                 f"<span class='bk-pp' title='projected to advance'>"
                 f"{padv*100:.0f}%</span></span></div>")
-    return f"<div class='bk-team empty'><span class='bk-src'>{src}</span></div>"
+    return (f"<div class='bk-team empty'><span class='bk-src'>{src}</span>"
+            f"<span class='bk-val'>&mdash;</span></div>")
 
 
 def _bk_winner_slot(label: str) -> str:
-    return f"<div class='bk-team empty'><span class='bk-src'>{label}</span></div>"
+    return (f"<div class='bk-team empty'><span class='bk-src'>{label}</span>"
+            f"<span class='bk-val'>&mdash;</span></div>")
 
 
 def _bk_actual_cell(row, pred) -> str:
@@ -707,8 +737,9 @@ def _bk_actual_cell(row, pred) -> str:
             wp = ph if side == "home" else pa
             win = f"<span class='bk-wp'>{wp*100:.0f}%</span>"
         return (f"<div class='bk-team real'>"
+                f"<span class='bk-val'>"
                 f"<span class='bk-name'>{_flag(name)} {html.escape(name)}</span>"
-                f"{win}</div>")
+                f"{win}</span></div>")
 
     cell = team_line(home, "home") + team_line(away, "away")
     if played:
@@ -893,11 +924,17 @@ def _market_section(blob) -> str:
         "</div>"
     )
     pm_table = (
-        "<h3 class='mk-h3'>Per-match &middot; biggest disagreements first</h3>"
-        "<div class='mk-tablewrap'><table class='mk-table'><thead><tr>"
-        "<th class='tl'>Match</th><th class='tl'>Outcome</th>"
-        "<th>Model</th><th>Market</th><th>Edge</th><th>EV</th>"
-        "<th>Vig</th><th>Vol</th></tr></thead>"
+        "<h3 class='mk-h3'>Per-match &middot; biggest disagreements first"
+        "<span class='mk-sub'>tap a column to sort</span></h3>"
+        "<div class='mk-tablewrap'><table class='mk-table mk-sortable'><thead><tr>"
+        "<th class='tl' data-key='match' onclick='mvmSort(this)'>Match</th>"
+        "<th class='tl' data-key='out' onclick='mvmSort(this)'>Outcome</th>"
+        "<th data-key='model' onclick='mvmSort(this)'>Model</th>"
+        "<th data-key='mkt' onclick='mvmSort(this)'>Market</th>"
+        "<th data-key='edge' class='mk-sorted-desc' onclick='mvmSort(this)'>Edge</th>"
+        "<th data-key='ev' onclick='mvmSort(this)'>EV</th>"
+        "<th data-key='vig' onclick='mvmSort(this)'>Vig</th>"
+        "<th data-key='vol' onclick='mvmSort(this)'>Vol</th></tr></thead>"
         "<tbody id='mk-rows'></tbody></table></div>"
         "<p class='mk-empty' id='mk-rows-empty' style='display:none'>"
         "No open per-match markets right now.</p>"
@@ -905,8 +942,11 @@ def _market_section(blob) -> str:
     title_table = (
         "<h3 class='mk-h3'>Title odds &middot; model champion% vs the winner market"
         "<span class='mk-sub'>~$2.9B market &middot; favourites first</span></h3>"
-        "<div class='mk-tablewrap'><table class='mk-table'><thead><tr>"
-        "<th class='tl'>Team</th><th>Model</th><th>Market</th><th>Edge</th>"
+        "<div class='mk-tablewrap'><table class='mk-table mk-sortable'><thead><tr>"
+        "<th class='tl' data-key='team' onclick='mvmSortT(this)'>Team</th>"
+        "<th data-key='model' onclick='mvmSortT(this)'>Model</th>"
+        "<th data-key='mkt' class='mk-sorted-desc' onclick='mvmSortT(this)'>Market</th>"
+        "<th data-key='edge' onclick='mvmSortT(this)'>Edge</th>"
         "</tr></thead><tbody id='mk-title'></tbody></table></div>"
     )
     foot = (
@@ -964,16 +1004,36 @@ def render_report(
         if getattr(r, "played", False):
             played_by_group[g] = played_by_group.get(g, 0) + 1
 
-    # Accuracy on played matches.
+    # Accuracy on played matches: 1X2 picks plus goals-market accuracy (used by
+    # the hero scoring tile + the Method tab).
     n_played = n_correct = 0
+    ou_hits = exact_hits = 0
+    goal_mass_sum = 0.0
     for row, pred in preds:
         if pred is not None and getattr(row, "played", False):
             n_played += 1
-            if _actual_label(int(row.home_score), int(row.away_score)) == _result_label(pred):
+            hs, as_ = int(row.home_score), int(row.away_score)
+            if _actual_label(hs, as_) == _result_label(pred):
                 n_correct += 1
+            # over/under 2.5 directional call
+            if (pred.p_over_2_5 >= 0.5) == ((hs + as_) >= 3):
+                ou_hits += 1
+            # exact modal scoreline
+            mi, mj, _mp = pred.top_scorelines(1)[0]
+            if (mi, mj) == (hs, as_):
+                exact_hits += 1
+            # probability mass the model placed on the actual goal total
+            gn = pred.grid.shape[0]
+            totals = np.add.outer(np.arange(gn), np.arange(gn))
+            goal_mass_sum += float(pred.grid[totals == (hs + as_)].sum())
     n_upcoming = sum(1 for r, p in preds
                      if p is not None and not getattr(r, "played", False))
     acc_pct = (n_correct / n_played * 100) if n_played else 0
+    ou_acc = (ou_hits / n_played * 100) if n_played else 0.0
+    total_mass = (goal_mass_sum / n_played) if n_played else 0.0
+    # Hand the in-tournament scoring stats to the Method tab.
+    metrics = {**metrics, "ou_acc": ou_acc, "exact_hits": exact_hits,
+               "scored_n": n_played, "total_mass": total_mass}
 
     # Group sections (A..L), each: advance forecast + cards.
     group_letters = sorted({getattr(r, "group", "") for r, _ in preds
@@ -1028,8 +1088,9 @@ def render_report(
         f"<div class='t-lab'>RPS &middot; {rps_edge:.0f}% better than Elo</div></div>"
         f"<div class='tile'><div class='t-val'>{n_upcoming}</div>"
         f"<div class='t-lab'>matches still to play</div></div>"
-        f"<div class='tile'><div class='t-val good'>&#10003;</div>"
-        f"<div class='t-lab'>{html.escape(metrics['calibration'])}</div></div>"
+        f"<div class='tile'><div class='t-val'>{ou_acc:.0f}%</div>"
+        f"<div class='t-lab'>over/under 2.5 calls right &middot; "
+        f"{exact_hits}/{n_played} exact scores</div></div>"
         f"</div>"
     )
 
@@ -1338,25 +1399,30 @@ body[data-filter='bracket'] .search,body[data-filter='bracket'] .no-results{disp
 .bk-head h2{font-size:23px;margin:6px 0 6px}
 .bk-lead{color:var(--muted);font-size:13.5px;max-width:760px;margin:0 0 18px}
 .bk-lead b{color:var(--ink)}.bk-proj-lbl{color:var(--accent)}
-.bk-scroll{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px}
-.bk-col{flex:0 0 188px;display:flex;flex-direction:column;gap:9px}
+.bk-scroll{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:stretch}
+.bk-col{flex:0 0 196px;display:flex;flex-direction:column;gap:12px;
+ justify-content:space-around}
 .bk-col-h{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
- color:var(--accent);position:sticky;top:54px;padding:2px 0 4px}
+ color:var(--accent);position:sticky;top:54px;z-index:5;background:var(--bg);
+ padding:8px 2px 6px;margin:0 -2px}
 .bk-match{background:linear-gradient(180deg,var(--card2),var(--card));
  border:1px solid var(--line);border-radius:10px;padding:4px;display:flex;
  flex-direction:column;gap:3px}
-.bk-team{display:flex;align-items:center;justify-content:space-between;gap:6px;
- padding:6px 8px;border-radius:7px;font-size:12.5px;min-height:30px}
-.bk-team.empty{color:var(--faint)}
-.bk-team.proj .bk-proj{display:flex;align-items:center;gap:5px;font-weight:600;color:var(--ink)}
+.bk-team{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;
+ gap:2px;padding:6px 9px;border-radius:7px;font-size:12.5px;min-height:46px;
+ box-sizing:border-box}
 .bk-src{font-size:10.5px;color:var(--faint);font-weight:600;text-transform:uppercase;
- letter-spacing:.04em;white-space:nowrap}
-.bk-team.proj{flex-direction:column;align-items:flex-start;gap:2px}
+ letter-spacing:.04em;white-space:nowrap;line-height:1.2}
+.bk-val{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;
+ min-height:18px;line-height:1.2}
+.bk-team.empty{color:var(--faint)}
+.bk-team.empty .bk-val{color:var(--faint);opacity:.6}
+.bk-team.proj .bk-proj{display:flex;align-items:center;gap:5px;font-weight:600;color:var(--ink)}
 .bk-pp{color:var(--muted);font-size:10.5px;font-weight:600;margin-left:2px}
 .bk-team.real{background:var(--bg2);font-weight:600}
 .bk-name{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;
  text-overflow:ellipsis;white-space:nowrap}
-.bk-wp{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.bk-wp{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;flex:0 0 auto}
 .bk-score{text-align:center;font-weight:800;font-size:14px;color:var(--accent);
  font-variant-numeric:tabular-nums;padding:1px 0 3px}
 
@@ -1405,6 +1471,37 @@ body[data-filter='market'] .no-results{display:none}
 .mk-foot{color:var(--faint);font-size:11.5px;margin-top:16px;border-top:1px solid var(--line);
  padding-top:12px;line-height:1.55;max-width:880px}
 .mk-empty{color:var(--muted);font-size:13px}
+/* sortable market headers */
+.mk-sortable th[data-key]{cursor:pointer;user-select:none;position:relative;
+ padding-right:15px;white-space:nowrap}
+.mk-sortable th[data-key]:hover{color:var(--ink)}
+.mk-sortable th[data-key]::after{content:'';position:absolute;right:5px;top:50%;
+ transform:translateY(-50%);border-left:3px solid transparent;border-right:3px solid transparent;
+ opacity:0;transition:opacity .12s}
+.mk-sortable th.mk-sorted-asc::after{opacity:.9;border-bottom:4px solid var(--accent)}
+.mk-sortable th.mk-sorted-desc::after{opacity:.9;border-top:4px solid var(--accent)}
+.mk-sortable th.mk-sorted-asc,.mk-sortable th.mk-sorted-desc{color:var(--ink)}
+
+/* per-card Model-vs-Market expander */
+.mvm{margin-top:11px;border-top:1px solid var(--line);padding-top:9px}
+.mvm-toggle{appearance:none;border:0;background:transparent;color:var(--accent);
+ font:inherit;font-size:12px;font-weight:700;letter-spacing:.02em;padding:0;
+ cursor:pointer;display:flex;align-items:center;gap:6px}
+.mvm-toggle:hover{color:#bfe3ff}
+.mvm-caret{display:inline-block;transition:transform .2s;font-size:10px}
+.mvm.open .mvm-caret{transform:rotate(180deg)}
+.mvm-body{display:none;margin-top:9px}
+.mvm.open .mvm-body{display:block}
+.mvm-rows{display:flex;flex-direction:column;gap:2px}
+.mvm-line{display:grid;grid-template-columns:1fr 46px 46px 46px;align-items:center;
+ gap:8px;font-size:12px;padding:2px 0;font-variant-numeric:tabular-nums}
+.mvm-colhead{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.mvm-line span:not(.mvm-out){text-align:right}
+.mvm-out{color:var(--ink);font-weight:600}
+.mvm-line .mvm-pos{color:var(--home);font-weight:700}
+.mvm-line .mvm-neg{color:var(--away);font-weight:700}
+.mvm-note{color:var(--faint);font-size:10.5px;margin-top:7px;line-height:1.45}
+.mvm-loading{color:var(--muted);font-size:12px;padding:4px 0}
 
 /* method tab */
 .method{display:none}
@@ -1475,6 +1572,13 @@ function toggleInsight(){
 function toggleTitle(){
   document.getElementById('titleodds').classList.toggle('collapsed');
 }
+function toggleExpander(btn){
+  var box=btn.closest('.mvm');
+  box.classList.toggle('open');
+  // On first open, ensure the shared live odds fetch has run (same data the
+  // Model-vs-Market tab uses).
+  if(box.classList.contains('open') && window.mvmEnsureFetch){ window.mvmEnsureFetch(); }
+}
 // Team search: filter match cards across groups + chrono, hide empty sections.
 function searchTeams(q){
   q=q.trim().toLowerCase();
@@ -1527,6 +1631,14 @@ _MARKET_JS = r"""
       emptyEl=document.getElementById('mk-rows-empty'), btn=document.getElementById('mk-refresh');
   var GAMMA='https://gamma-api.polymarket.com', SERIES=11433,
       VIG_MAX=0.06, MIN_VOL=20000, P_FLOOR=0.05, INTERVAL=600000;
+  // sort state + last-rendered rows, so header clicks re-sort the CURRENT data
+  // (live or snapshot) without refetching. Defaults match the initial order.
+  var lastMatchRows=[], matchSort={key:'edge', dir:-1};
+  var lastTitleRows=[], titleSort={key:'mkt', dir:-1};
+  var warmed=false;
+  // index POLY matches by the card key (data-teams = "home away", lowercased)
+  var matchByKey={};
+  if(P.matches){ P.matches.forEach(function(m){ matchByKey[(m.home+' '+m.away).toLowerCase()]=m; }); }
 
   function pct(x){ return (x*100).toFixed(0)+'%'; }
   function pct1(x){ return (x*100).toFixed(1)+'%'; }
@@ -1537,20 +1649,31 @@ _MARKET_JS = r"""
   function volfmt(v){ if(v>=1e6) return '$'+(v/1e6).toFixed(1)+'M'; if(v>=1e3) return '$'+(v/1e3).toFixed(0)+'K'; return '$'+(v||0).toFixed(0); }
   function devig(arr){ var s=arr.reduce(function(a,b){return a+b;},0)||1; return {p:arr.map(function(x){return x/s;}), vig:s-1}; }
 
+  function ft(url){   // fetch with a hard timeout so one slow endpoint can't hang the UI
+    var c=new AbortController(), t=setTimeout(function(){ c.abort(); }, 15000);
+    return fetch(url,{signal:c.signal}).then(function(r){ clearTimeout(t); return r; });
+  }
   function fetchLive(){
-    var bySlug={}, stop=false;
-    function page(off){
-      if(stop) return Promise.resolve();
-      return fetch(GAMMA+'/events?series_id='+SERIES+'&closed=false&limit=100&offset='+off)
-        .then(function(r){ if(!r.ok) throw 0; return r.json(); })
-        .then(function(b){ b.forEach(function(e){ bySlug[e.slug]=e; }); if(b.length<100) stop=true; });
+    // Fetch ONLY the baked slugs (indexed lookups are fast; the series-listing
+    // query can be very slow). Batch to keep URLs short; run batches in parallel.
+    var slugs=[];
+    P.matches.forEach(function(m){ slugs.push(m.slug); if(m.moreSlug) slugs.push(m.moreSlug); });
+    var bySlug={}, reqs=[];
+    for(var i=0;i<slugs.length;i+=15){
+      var qs=slugs.slice(i,i+15).map(function(s){ return 'slug='+encodeURIComponent(s); }).join('&');
+      reqs.push(ft(GAMMA+'/events?'+qs)
+        .then(function(r){ return r.ok?r.json():[]; })
+        // keep OPEN events only: a since-kicked-off match returns a settled
+        // 0/1 event whose "odds" would be a bogus comparison.
+        .then(function(arr){ (arr||[]).forEach(function(e){ if(e && !e.closed) bySlug[e.slug]=e; }); })
+        .catch(function(){}));
     }
-    var chain=Promise.resolve();
-    [0,100,200,300,400].forEach(function(off){ chain=chain.then(function(){ return page(off); }); });
-    var winnerP=fetch(GAMMA+'/events?slug='+P.title.slug)
+    var winnerP=ft(GAMMA+'/events?slug='+encodeURIComponent(P.title.slug))
       .then(function(r){ return r.ok?r.json():null; })
       .then(function(a){ return a&&a[0]; }).catch(function(){ return null; });
-    return Promise.all([chain, winnerP]).then(function(res){ return {bySlug:bySlug, winner:res[1]}; });
+    return Promise.all(reqs.concat([winnerP])).then(function(res){
+      return {bySlug:bySlug, winner:res[res.length-1]};
+    });
   }
 
   function liveMatchPrices(m, bySlug){
@@ -1593,6 +1716,8 @@ _MARKET_JS = r"""
     return rows;
   }
   function renderMatchRows(rows){
+    lastMatchRows=rows;                       // cache for header re-sort
+    rows=sortRows(rows.slice(), matchSort);   // apply current sort
     if(!rows.length){ rowsEl.innerHTML=''; if(emptyEl) emptyEl.style.display='block'; return; }
     if(emptyEl) emptyEl.style.display='none';
     rowsEl.innerHTML=rows.map(function(r){
@@ -1610,23 +1735,86 @@ _MARKET_JS = r"""
     return rows;
   }
   function renderTitleRows(rows){
+    lastTitleRows=rows;                        // cache for header re-sort
+    rows=sortRows(rows.slice(), titleSort);
     titleEl.innerHTML=rows.map(function(r){
       return "<tr><td class='tl mk-match'>"+esc(r.team)+"</td><td>"+pct1(r.model)+"</td><td>"+pct1(r.mkt)
         +"</td><td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+"</td></tr>";
     }).join('');
   }
 
+  // --- sorting (Feature: clickable headers) ------------------------------
+  function sortVal(r,key){
+    if(key==='edge') return Math.abs(r.edge);          // |edge| keeps "biggest gap" intent
+    if(key==='ev')   return (r.mkt<P_FLOOR? -Infinity : r.model/r.mkt-1);
+    var v=r[key];
+    return typeof v==='string'? v.toLowerCase() : v;
+  }
+  function sortRows(rows,st){
+    rows.sort(function(a,b){ var x=sortVal(a,st.key), y=sortVal(b,st.key);
+      return x<y? -st.dir : (x>y? st.dir : 0); });
+    return rows;
+  }
+  function markHeader(th,dir){
+    var tr=th.parentNode;
+    [].forEach.call(tr.children,function(h){ h.classList.remove('mk-sorted-asc','mk-sorted-desc'); });
+    th.classList.add(dir>0?'mk-sorted-asc':'mk-sorted-desc');
+  }
+  function mvmSort(th){ var key=th.dataset.key;
+    matchSort.dir=(matchSort.key===key)? -matchSort.dir : ((key==='match'||key==='out')?1:-1);
+    matchSort.key=key; markHeader(th, matchSort.dir); renderMatchRows(lastMatchRows);
+  }
+  function mvmSortT(th){ var key=th.dataset.key;
+    titleSort.dir=(titleSort.key===key)? -titleSort.dir : (key==='team'?1:-1);
+    titleSort.key=key; markHeader(th, titleSort.dir); renderTitleRows(lastTitleRows);
+  }
+  window.mvmSort=mvmSort; window.mvmSortT=mvmSortT;
+
+  // --- per-card expanders (Feature: fill from the SAME fetch) -------------
+  function mvmFillCards(get){
+    document.querySelectorAll('.match[data-state="upcoming"] .mvm').forEach(function(box){
+      var card=box.closest('.match'), m=matchByKey[card.dataset.teams||''];
+      if(!m) return;                                   // no odds -> stays hidden
+      box.hidden=false;                                // odds exist -> reveal toggle
+      var pr=get(m), rEl=box.querySelector('.mvm-rows'), nEl=box.querySelector('.mvm-note');
+      if(!pr){ rEl.innerHTML="<div class='mvm-loading'>Live odds unavailable.</div>"; nEl.textContent=''; return; }
+      var dv=devig([pr.h,pr.d,pr.a]), pm=dv.p;
+      var lines=[['Home',m.model.h,pm[0]],['Draw',m.model.d,pm[1]],['Away',m.model.a,pm[2]]];
+      if(pr.btts){ var bs=pr.btts[0]+pr.btts[1]; lines.push(['BTTS',m.model.btts,pr.btts[0]/(bs||1)]); }
+      if(pr.o25){ var os=pr.o25[0]+pr.o25[1]; lines.push(['Over 2.5',m.model.o25,pr.o25[0]/(os||1)]); }
+      var head="<div class='mvm-line mvm-colhead'><span class='mvm-out'>Outcome</span>"
+        +"<span>Model</span><span>Market</span><span>Edge</span></div>";
+      rEl.innerHTML=head+lines.map(function(o){ var edge=o[1]-o[2];
+        return "<div class='mvm-line'><span class='mvm-out'>"+o[0]+"</span><span>"+pct(o[1])+"</span><span>"
+          +pct(o[2])+"</span><span class='"+(edge>=0?'mvm-pos':'mvm-neg')+"'>"+pp(edge)+"</span></div>";
+      }).join('');
+      nEl.innerHTML="Vig "+(dv.vig*100).toFixed(1)+"% &middot; vol "+volfmt(m.vol)
+        +". Model &minus; market in pts. Divergence is not value.";
+    });
+  }
+
   function renderSnapshot(){
     renderMatchRows(buildMatchRows(snapMatch));
     renderTitleRows(buildTitleRows(function(t){ return t.snap!=null? t.snap/(P.title.sum||1):null; }));
+    mvmFillCards(snapMatch);                  // fill card expanders from snapshot
     if(asofEl) asofEl.textContent=P.asof+' (snapshot)';
     if(dotEl) dotEl.className='mk-dot stale';
   }
   function renderLive(live){
-    renderMatchRows(buildMatchRows(function(m){ return liveMatchPrices(m, live.bySlug); }));
+    // Wholesale fetch failure (network / CORS / all batches timed out): keep
+    // whatever is already painted (the snapshot or last good live data) rather
+    // than wiping the tables + cards with empty "live" results.
+    if(!Object.keys(live.bySlug).length && !live.winner){
+      if(statusEl) statusEl.textContent='Live odds unavailable right now — showing the last values.';
+      if(dotEl) dotEl.className='mk-dot stale';
+      return;
+    }
+    var get=function(m){ return liveMatchPrices(m, live.bySlug); };
+    renderMatchRows(buildMatchRows(get));
     var tsum=0, wmap={};
     if(live.winner&&live.winner.markets){ live.winner.markets.forEach(function(mk){ var pr=jp(mk.outcomePrices); if(pr){ wmap[mk.groupItemTitle]=+pr[0]; tsum+=(+pr[0]); } }); }
     renderTitleRows(buildTitleRows(function(t){ var v=wmap[t.git]; return v==null?null:v/(tsum||1); }));
+    mvmFillCards(get);                        // fill card expanders from live data
     if(asofEl) asofEl.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     if(dotEl) dotEl.className='mk-dot live';
     if(statusEl) statusEl.textContent='';
@@ -1643,9 +1831,10 @@ _MARKET_JS = r"""
     }).then(function(){ loading=false; if(btn){ btn.disabled=false; btn.classList.remove('loading'); } });
   }
   window.refreshMarket=refresh;
+  // A card's first expand triggers the SAME shared fetch, once.
+  window.mvmEnsureFetch=function(){ if(!warmed){ warmed=true; refresh(); } };
 
-  renderSnapshot();                       // instant, no network
-  var warmed=false;
+  renderSnapshot();                       // instant, no network; also fills cards
   var mb=document.querySelector("button[data-filter='market']");
   if(mb){ mb.addEventListener('click', function(){ if(!warmed){ warmed=true; refresh(); } }); }
   setInterval(function(){
