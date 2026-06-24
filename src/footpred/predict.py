@@ -27,6 +27,15 @@ class Prediction:
     grid: np.ndarray              # [max_goals+1, max_goals+1], P(i home, j away)
     max_goals: int
 
+    # --- per-draw posterior 1X2 (None unless predict(..., posterior_spread=True)) ---
+    # Each is shape [S]: that draw's P(home win)/P(draw)/P(away win), plus the
+    # per-draw expected total goals. The mean over draws equals the point
+    # summaries below; the spread is the posterior uncertainty the MCMC buys us.
+    draw_p_home: np.ndarray | None = None
+    draw_p_draw: np.ndarray | None = None
+    draw_p_away: np.ndarray | None = None
+    draw_exp_total: np.ndarray | None = None
+
     # --- collapsed summaries ---
     @property
     def p_home_win(self) -> float:
@@ -55,6 +64,25 @@ class Prediction:
         i = np.arange(self.max_goals + 1)
         total = i[:, None] + i[None, :]
         return float(self.grid[total >= 3].sum())
+
+    def has_spread(self) -> bool:
+        return self.draw_p_home is not None
+
+    def ci_1x2(self, outcome: str, lo: float = 5.0, hi: float = 95.0):
+        """(lo, hi) credible-interval bounds for one 1X2 outcome's probability
+        across the posterior draws. ``outcome`` in {"home","draw","away"}.
+        Returns None if per-draw spread wasn't computed."""
+        arr = {"home": self.draw_p_home, "draw": self.draw_p_draw,
+               "away": self.draw_p_away}.get(outcome)
+        if arr is None:
+            return None
+        return (float(np.percentile(arr, lo)), float(np.percentile(arr, hi)))
+
+    def ci_exp_total(self, lo: float = 5.0, hi: float = 95.0):
+        if self.draw_exp_total is None:
+            return None
+        return (float(np.percentile(self.draw_exp_total, lo)),
+                float(np.percentile(self.draw_exp_total, hi)))
 
     def top_scorelines(self, n: int = 5) -> list[tuple[int, int, float]]:
         flat = [
@@ -96,6 +124,7 @@ def predict(
     neutral: bool = False,
     max_goals: int = 10,
     teams: list[str] | None = None,
+    posterior_spread: bool = False,
 ) -> Prediction:
     """Predict a single fixture from the posterior.
 
@@ -129,6 +158,9 @@ def predict(
     pmf_h = poisson.pmf(k[None, :], lam_h[:, None])   # [S, G+1]
     pmf_a = poisson.pmf(k[None, :], lam_a[:, None])   # [S, G+1]
 
+    # per-draw 1X2 + expected total, populated only when posterior_spread=True
+    dph = dpd = dpa = dtot = None
+
     if "rho" in idata.posterior:
         # Dixon-Coles: per-draw grid with the tau correction on the four
         # low-score cells, renormalized per draw, then averaged.
@@ -139,12 +171,36 @@ def predict(
         g[:, 1, 0] *= (1.0 + lam_a * rho)
         g[:, 1, 1] *= (1.0 - rho)
         g = np.clip(g, 0.0, None)
-        g /= g.sum(axis=(1, 2), keepdims=True)
+        g /= g.sum(axis=(1, 2), keepdims=True)              # per-draw normalized
         grid = g.mean(axis=0)
+        if posterior_spread:
+            ii = np.arange(grid.shape[0])
+            tri_lower = (ii[:, None] > ii[None, :]).ravel()   # home > away
+            tri_upper = (ii[:, None] < ii[None, :]).ravel()   # away > home
+            diag = (ii[:, None] == ii[None, :]).ravel()
+            gf = g.reshape(g.shape[0], -1)                    # [S, (G+1)^2]
+            dph = gf[:, tri_lower].sum(axis=1)
+            dpa = gf[:, tri_upper].sum(axis=1)
+            dpd = gf[:, diag].sum(axis=1)
     else:
         # Independent double-Poisson: average the per-draw outer products.
         grid = np.einsum("si,sj->ij", pmf_h, pmf_a) / pmf_h.shape[0]
+        if posterior_spread:
+            # Per-draw 1X2 WITHOUT materializing [S,G+1,G+1] — vector reductions.
+            # Normalize each draw on the truncated 0..G square (matches the mean
+            # grid's renormalization below) so the three sum to 1 per draw and
+            # mean_s P_x[s] == the collapsed point summary.
+            cdf_h = np.cumsum(pmf_h, axis=1)                  # [S, G+1]
+            tot_h = cdf_h[:, -1]                              # mass on 0..G
+            tot_a = np.cumsum(pmf_a, axis=1)[:, -1]
+            Z = tot_h * tot_a                                 # [S] truncated mass
+            dpd = (pmf_h * pmf_a).sum(axis=1) / Z
+            dph = (pmf_a * (tot_h[:, None] - cdf_h)).sum(axis=1) / Z
+            dpa = 1.0 - dph - dpd
     grid = grid / grid.sum()  # renormalize (truncation at max_goals)
+
+    if posterior_spread:
+        dtot = lam_h + lam_a   # per-draw expected total goals [S]
 
     return Prediction(
         home_team=home_team,
@@ -152,4 +208,8 @@ def predict(
         neutral=neutral,
         grid=grid,
         max_goals=max_goals,
+        draw_p_home=dph,
+        draw_p_draw=dpd,
+        draw_p_away=dpa,
+        draw_exp_total=dtot,
     )

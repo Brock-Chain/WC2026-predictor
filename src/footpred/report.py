@@ -108,7 +108,7 @@ def build_predictions(idata, fixtures: pd.DataFrame, teams: list[str]):
             continue
         neutral = not (r.home_team in HOSTS or r.away_team in HOSTS)
         pred = predict(idata, r.home_team, r.away_team,
-                       neutral=neutral, teams=teams)
+                       neutral=neutral, teams=teams, posterior_spread=True)
         out.append((r, pred))
     return out
 
@@ -273,9 +273,31 @@ def _match_card(row, pred: Prediction | None) -> str:
                     f"<span class='hl-sub'>final &middot; predicted {mi}&#8211;{mj} "
                     f"&middot; {badge}</span></div>")
     else:
+        ci_html = ""
+        if pred.has_spread():
+            fav_p = (pred.p_home_win if fav == "home"
+                     else pred.p_away_win if fav == "away" else pred.p_draw)
+            fav_team = (row.home_team if fav == "home"
+                        else row.away_team if fav == "away" else "draw")
+            ci = pred.ci_1x2(fav)
+            if ci is not None:
+                lo, hi = ci
+                who = "draw" if fav == "draw" else f"{html.escape(fav_team)} win"
+                label = "draw" if fav == "draw" else html.escape(fav_team)
+                ci_html = (
+                    f"<div class='hl-ci' tabindex='0' title='90% posterior credible "
+                    f"interval. Across the model&#39;s parameter draws, P({who}) is "
+                    f"{_pct(fav_p)} on average and lands between {_pct(lo)} and "
+                    f"{_pct(hi)} in the middle 90% of draws &mdash; the uncertainty "
+                    f"the model is honest about (not the chance of the result "
+                    f"itself).'>{_pct(fav_p)} {label} "
+                    f"<span class='ci-range'>(90% CI {_pct(lo)}&#8211;{_pct(hi)})</span>"
+                    f"</div>"
+                )
         headline = (f"<div class='headline'><span class='score pred'>{mi}&#8211;{mj}"
                     f"</span>{paradox}<span class='hl-sub'>most likely &middot; {_pct(mp)} "
-                    f"&middot; <span class='chip {conf_cls}'>{conf_lbl}</span></span></div>")
+                    f"&middot; <span class='chip {conf_cls}'>{conf_lbl}</span></span>"
+                    f"{ci_html}</div>")
 
     gb = _goal_breakdown(pred)
     stats = (
@@ -554,6 +576,85 @@ def _variant_table_html() -> str:
     )
 
 
+def _reliability_svg() -> str:
+    """Reliability (calibration) curve baked from reports/calibration.json:
+    predicted probability (x) vs empirical frequency (y); the diagonal is
+    perfect calibration; point area encodes bin n. Inline SVG, CSS-var fills
+    (same idiom as _heatmap_html). Returns "" if the cache is absent."""
+    path = PROJECT_ROOT / "reports" / "calibration.json"
+    if not path.exists():
+        return ""
+    try:
+        cal = json.loads(path.read_text())
+        bins = cal["bins"]
+    except Exception:
+        return ""
+    if not bins:
+        return ""
+
+    PAD_L, PAD_B, PAD_T, PAD_R = 30, 24, 12, 12
+    PLOT = 180                       # square plotting area
+    W = PAD_L + PLOT + PAD_R
+    H = PAD_T + PLOT + PAD_B
+
+    def X(p: float) -> float:
+        return PAD_L + p * PLOT
+
+    def Y(p: float) -> float:
+        return PAD_T + (1.0 - p) * PLOT   # y up
+
+    parts = [f"<svg class='rel' viewBox='0 0 {W} {H}' "
+             f"xmlns='http://www.w3.org/2000/svg'>"]
+
+    for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+        gx, gy = X(t), Y(t)
+        parts.append(f"<line class='rel-grid' x1='{gx:.1f}' y1='{PAD_T}' "
+                     f"x2='{gx:.1f}' y2='{PAD_T + PLOT}'/>")
+        parts.append(f"<line class='rel-grid' x1='{PAD_L}' y1='{gy:.1f}' "
+                     f"x2='{PAD_L + PLOT}' y2='{gy:.1f}'/>")
+        parts.append(f"<text class='rel-lbl' x='{gx:.1f}' y='{PAD_T + PLOT + 14}' "
+                     f"text-anchor='middle' font-size='8'>{t:.2g}</text>")
+        parts.append(f"<text class='rel-lbl' x='{PAD_L - 4}' y='{gy + 3:.1f}' "
+                     f"text-anchor='end' font-size='8'>{t:.2g}</text>")
+
+    parts.append(f"<line class='rel-diag' x1='{X(0)}' y1='{Y(0)}' "
+                 f"x2='{X(1)}' y2='{Y(1)}'/>")
+
+    pts = sorted(bins, key=lambda d: d["mean_pred"])
+    poly = " ".join(f"{X(d['mean_pred']):.1f},{Y(d['empirical']):.1f}" for d in pts)
+    parts.append(f"<polyline class='rel-line' points='{poly}'/>")
+
+    nmax = max(d["n"] for d in bins) or 1
+    for d in bins:
+        cx, cy = X(d["mean_pred"]), Y(d["empirical"])
+        r = 2.5 + 4.5 * (d["n"] / nmax) ** 0.5
+        parts.append(
+            f"<circle class='rel-pt' cx='{cx:.1f}' cy='{cy:.1f}' r='{r:.1f}'>"
+            f"<title>pred {d['mean_pred']*100:.0f}% &#8594; actual "
+            f"{d['empirical']*100:.0f}%  (n={d['n']})</title></circle>"
+        )
+
+    parts.append(f"<text class='rel-axt' x='{PAD_L + PLOT/2:.0f}' y='{H - 2}' "
+                 f"text-anchor='middle' font-size='8.5'>predicted probability</text>")
+    parts.append(f"<text class='rel-axt' x='10' y='{PAD_T + PLOT/2:.0f}' "
+                 f"text-anchor='middle' font-size='8.5' "
+                 f"transform='rotate(-90 10 {PAD_T + PLOT/2:.0f})'>observed "
+                 f"frequency</text>")
+    parts.append("</svg>")
+
+    ece = cal.get("ece")
+    cap = (f"<p class='m-note'>Reliability across all home/draw/away probabilities "
+           f"on <b>{cal.get('n_matches', '?')}</b> matches "
+           f"(<b>{cal.get('n_predictions', '?')}</b> probability&#8211;outcome "
+           f"pairs). Points on the diagonal = perfectly calibrated; point size = "
+           f"bin count. "
+           + (f"Mean miscalibration (ECE) <b>{ece*100:.1f}%</b>. "
+              if ece is not None else "")
+           + "In-sample check &#8212; the backtest scores are the out-of-sample "
+           "skill measure.</p>")
+    return f"<div class='rel-wrap'>{''.join(parts)}</div>{cap}"
+
+
 def _method_section(metrics: dict, n_teams: int) -> str:
     """The 'Method' tab: what the model is, the data, validation, and an honest
     record of what was tested and rejected — the portfolio narrative."""
@@ -562,12 +663,13 @@ def _method_section(metrics: dict, n_teams: int) -> str:
     if metrics.get("scored_n"):
         scoring_note = (
             f"<p class='m-note'>On the <b>{metrics['scored_n']}</b> WC2026 matches "
-            f"played so far it has called <b>{metrics['ou_acc']:.0f}%</b> of "
-            f"over/under-2.5 totals correctly and nailed <b>{metrics['exact_hits']}/"
-            f"{metrics['scored_n']}</b> exact final scores, placing on average "
-            f"<b>{metrics['total_mass']*100:.0f}%</b> of its probability on the "
-            f"actual goal total. These are small-sample, in-tournament numbers — "
-            f"the backtest figures are the stable measure of skill.</p>"
+            f"played so far — a small, noisy sample — it has called "
+            f"<b>{metrics['ou_acc']:.0f}%</b> of over/under-2.5 totals correctly and "
+            f"nailed <b>{metrics['exact_hits']}/{metrics['scored_n']}</b> exact final "
+            f"scores, placing on average <b>{metrics['total_mass']*100:.0f}%</b> of "
+            f"its probability on the actual goal total. With only ~{metrics['scored_n']} "
+            f"matches these in-tournament figures will bounce around; the backtest "
+            f"numbers above are the stable measure of skill.</p>"
         )
     return (
         "<section class='method' id='method'>"
@@ -605,9 +707,11 @@ def _method_section(metrics: dict, n_teams: int) -> str:
         "<div class='m-card'><h3>Does it actually work?</h3>"
         f"<p>On a temporal backtest (train on the past, predict the future, no "
         f"leakage) it scores <b>RPS {metrics['bayes_rps']:.3f}</b> — about "
-        f"<b>{rps_edge:.0f}% better than Elo</b> ({metrics['elo_rps']:.3f}) — and "
-        "is well-calibrated (predicted probabilities match observed frequencies). "
+        f"<b>{rps_edge:.0f}% better than Elo</b> ({metrics['elo_rps']:.3f}). "
         "RPS is the standard proper score for ordered 1X2 outcomes.</p>"
+        "<p>It's also <b>well-calibrated</b> — when it says 30%, it happens about "
+        "30% of the time. The reliability curve should hug the diagonal:</p>"
+        f"{_reliability_svg()}"
         f"{scoring_note}"
         f"{_variant_table_html()}</div>"
 
@@ -917,15 +1021,20 @@ def _market_section(blob) -> str:
     )
     controls = (
         "<div class='mk-controls'>"
-        "<span class='mk-asof'>Odds as of <b id='mk-asof'>snapshot</b>"
-        "<span class='mk-dot' id='mk-dot' title='live'></span></span>"
+        "<span class='mk-asof'><span id='mk-asof'>Loading snapshot&hellip;</span>"
+        "<span class='mk-dot' id='mk-dot' title='snapshot'></span></span>"
         "<button class='mk-refresh' id='mk-refresh' onclick='refreshMarket()'>"
-        "&#8635; Refresh odds</button>"
+        "&#8635; Refresh for live odds</button>"
         "</div>"
     )
     pm_table = (
         "<h3 class='mk-h3'>Per-match &middot; biggest disagreements first"
         "<span class='mk-sub'>tap a column to sort</span></h3>"
+        "<p class='mk-caveat'><b>Why the top rows lie.</b> These are sorted by gap "
+        "size across <b><span id='mk-ncmp'>&mdash;</span> outcomes</b>. With that "
+        "many comparisons, the largest gaps are also the ones most likely to be "
+        "noise or our own blind spots &mdash; not edges. The bigger the gap, the "
+        "more suspicious it should look, not less.</p>"
         "<div class='mk-tablewrap'><table class='mk-table mk-sortable'><thead><tr>"
         "<th class='tl' data-key='match' onclick='mvmSort(this)'>Match</th>"
         "<th class='tl' data-key='out' onclick='mvmSort(this)'>Outcome</th>"
@@ -942,6 +1051,10 @@ def _market_section(blob) -> str:
     title_table = (
         "<h3 class='mk-h3'>Title odds &middot; model champion% vs the winner market"
         "<span class='mk-sub'>~$2.9B market &middot; favourites first</span></h3>"
+        "<p class='mk-caveat'>Longshots are <b>greyed</b>: a team the market prices "
+        "near zero will always show a big-looking edge, but at those odds the "
+        "comparison is favourite&#8211;longshot noise, not signal. Trust the rows "
+        "up top.</p>"
         "<div class='mk-tablewrap'><table class='mk-table mk-sortable'><thead><tr>"
         "<th class='tl' data-key='team' onclick='mvmSortT(this)'>Team</th>"
         "<th data-key='model' onclick='mvmSortT(this)'>Model</th>"
@@ -953,11 +1066,13 @@ def _market_section(blob) -> str:
         "<p class='mk-foot'>Market probabilities are de-vigged proportionally "
         "(price &divide; sum of outcomes); <b>Edge</b> = model &minus; market in "
         "percentage points; <b>EV</b> = model &divide; market &minus; 1 for a unit "
-        "stake. Rows where the market is thin (low volume) or the overround is "
-        "high (&gt;6%) are greyed; EV is hidden for sub-5% market prices "
-        "(favourite&#8211;longshot noise). Source: Polymarket Gamma API (keyless, "
-        "fetched live in your browser). Not affiliated with Polymarket; "
-        "educational comparison only.</p>"
+        "stake. Per-match rows where the market is thin (low volume) or the "
+        "overround is high (&gt;6%) are greyed; EV is hidden for sub-5% market "
+        "prices. Title rows below a 2% market-implied champion probability are "
+        "greyed (favourite&#8211;longshot noise). The &lsquo;?&rsquo; flags rows "
+        "where the gap is large enough that noise is the most likely explanation. "
+        "Source: Polymarket Gamma API (keyless, fetched live in your browser). "
+        "Not affiliated with Polymarket; educational comparison only.</p>"
     )
     return (
         "<section class='market' id='market'>"
@@ -1080,15 +1195,19 @@ def render_report(
     gen = f" &middot; as of {html.escape(generated_on)}" if generated_on else ""
     rps_edge = (metrics["elo_rps"] - metrics["bayes_rps"]) / metrics["elo_rps"] * 100
 
+    noisy = (f"Out of {n_played} WC2026 matches played so far — a small, noisy "
+             f"in-tournament sample. The backtest (2,500+ matches, see Method) "
+             f"is the stable skill measure.")
     tiles = (
         f"<div class='tiles'>"
-        f"<div class='tile'><div class='t-val'>{n_correct}/{n_played}</div>"
+        f"<div class='tile' title='{noisy}'>"
+        f"<div class='t-val'>{n_correct}/{n_played}</div>"
         f"<div class='t-lab'>correct picks &middot; {acc_pct:.0f}%</div></div>"
         f"<div class='tile'><div class='t-val'>{metrics['bayes_rps']:.3f}</div>"
         f"<div class='t-lab'>RPS &middot; {rps_edge:.0f}% better than Elo</div></div>"
         f"<div class='tile'><div class='t-val'>{n_upcoming}</div>"
         f"<div class='t-lab'>matches still to play</div></div>"
-        f"<div class='tile'><div class='t-val'>{ou_acc:.0f}%</div>"
+        f"<div class='tile' title='{noisy}'><div class='t-val'>{ou_acc:.0f}%</div>"
         f"<div class='t-lab'>over/under 2.5 calls right &middot; "
         f"{exact_hits}/{n_played} exact scores</div></div>"
         f"</div>"
@@ -1199,6 +1318,7 @@ h1 .accent{background:linear-gradient(90deg,#7dd3fc,#34d399);
 .t-val{font-size:30px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .t-val.good{color:var(--good)}
 .t-lab{color:var(--muted);font-size:12.5px;margin-top:3px;line-height:1.35}
+.tile[title]{cursor:help}
 
 /* callouts */
 .callouts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
@@ -1292,6 +1412,10 @@ main{padding:24px 0 70px}
 .score{font-size:26px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 .score.pred{color:var(--accent)}
 .hl-sub{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+.hl-ci{display:block;color:var(--faint);font-size:11px;margin-top:3px;cursor:help;
+ font-variant-numeric:tabular-nums}
+.hl-ci .ci-range{color:var(--muted);font-weight:600}
+.hl-ci:hover,.hl-ci:focus{color:var(--muted);outline:none}
 .chip{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;
  font-weight:700}
 .c-strong{background:rgba(52,211,153,.16);color:var(--home)}
@@ -1373,6 +1497,16 @@ body.searching.no-hits .no-results{display:block}
 .hm rect{stroke-linejoin:round}
 .hm-lbl{fill:var(--muted);font-variant-numeric:tabular-nums}
 .hm-corner-lbl{fill:var(--faint)}
+
+/* reliability (calibration) plot — same inline-SVG idiom as .hm */
+.rel-wrap{display:flex;justify-content:center;margin:10px 0 2px}
+.rel{width:230px;height:auto;display:block}
+.rel-grid{stroke:var(--line);stroke-width:.5}
+.rel-diag{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3}
+.rel-line{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-linejoin:round;opacity:.5}
+.rel-pt{fill:var(--accent);fill-opacity:.85;stroke:var(--bg);stroke-width:.6}
+.rel-lbl{fill:var(--faint);font-variant-numeric:tabular-nums}
+.rel-axt{fill:var(--muted)}
 
 /* skip card */
 .match.skip{border-left:3px dashed var(--line2);background:var(--card)}
@@ -1475,12 +1609,22 @@ body[data-filter='market'] .no-results{display:none}
  font-variant-numeric:tabular-nums}
 .mk-match{font-weight:600;color:var(--ink)}
 .mk-table tr.mk-muted td{color:var(--faint);opacity:.55}
-.mk-table tr.mk-big td{background:rgba(96,165,250,.07)}
 .mk-pos{color:var(--home);font-weight:700}
 .mk-neg{color:var(--away);font-weight:700}
 .mk-foot{color:var(--faint);font-size:11.5px;margin-top:16px;border-top:1px solid var(--line);
  padding-top:12px;line-height:1.55;max-width:880px}
 .mk-empty{color:var(--muted);font-size:13px}
+/* honesty layer: noise caveats + suspect/longshot flags */
+.mk-caveat{color:var(--muted);font-size:12px;line-height:1.5;max-width:760px;
+ margin:-2px 0 10px;padding:8px 12px;border-left:2px solid var(--draw);
+ background:rgba(251,191,36,.05);border-radius:0 8px 8px 0}
+.mk-caveat b{color:var(--ink)}
+.mk-table tr.mk-suspect td{background:rgba(251,191,36,.05)}
+.mk-flag{display:inline-block;margin-left:5px;font-weight:700;font-size:10px;
+ color:var(--draw);border:1px solid var(--draw);border-radius:50%;
+ width:13px;height:13px;line-height:11px;text-align:center;cursor:help;
+ vertical-align:1px;opacity:.85}
+.mk-table tr.mk-muted .mk-flag{opacity:.5}
 /* sortable market headers */
 .mk-sortable th[data-key]{cursor:pointer;user-select:none;position:relative;
  padding-right:15px;white-space:nowrap}
@@ -1640,7 +1784,7 @@ _MARKET_JS = r"""
       statusEl=document.getElementById('mk-status'), titleEl=document.getElementById('mk-title'),
       emptyEl=document.getElementById('mk-rows-empty'), btn=document.getElementById('mk-refresh');
   var GAMMA='https://gamma-api.polymarket.com', SERIES=11433,
-      VIG_MAX=0.06, MIN_VOL=20000, P_FLOOR=0.05, INTERVAL=600000;
+      VIG_MAX=0.06, MIN_VOL=20000, P_FLOOR=0.05, TITLE_FLOOR=0.02, INTERVAL=600000;
   // sort state + last-rendered rows, so header clicks re-sort the CURRENT data
   // (live or snapshot) without refetching. Defaults match the initial order.
   var lastMatchRows=[], matchSort={key:'edge', dir:-1};
@@ -1657,6 +1801,13 @@ _MARKET_JS = r"""
   function jp(s){ try{ return typeof s==='string'?JSON.parse(s):s; }catch(e){ return null; } }
   function esc(s){ return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
   function volfmt(v){ if(v>=1e6) return '$'+(v/1e6).toFixed(1)+'M'; if(v>=1e3) return '$'+(v/1e3).toFixed(0)+'K'; return '$'+(v||0).toFixed(0); }
+  function snapAge(asof){   // asof = baked build-date string; honest "N days old"
+    var d=new Date(asof); if(isNaN(d)) return {txt:'', days:null};
+    var days=Math.floor((Date.now()-d.getTime())/86400000);
+    if(days<=0) return {txt:'today', days:0};
+    if(days===1) return {txt:'1 day old', days:1};
+    return {txt:days+' days old', days:days};
+  }
   function devig(arr){ var s=arr.reduce(function(a,b){return a+b;},0)||1; return {p:arr.map(function(x){return x/s;}), vig:s-1}; }
 
   function ft(url){   // fetch with a hard timeout so one slow endpoint can't hang the UI
@@ -1727,20 +1878,27 @@ _MARKET_JS = r"""
   }
   function renderMatchRows(rows){
     lastMatchRows=rows;                       // cache for header re-sort
+    var ncmp=document.getElementById('mk-ncmp');
+    if(ncmp) ncmp.textContent=rows.length;    // N comparisons actually shown
     rows=sortRows(rows.slice(), matchSort);   // apply current sort
     if(!rows.length){ rowsEl.innerHTML=''; if(emptyEl) emptyEl.style.display='block'; return; }
     if(emptyEl) emptyEl.style.display='none';
     rowsEl.innerHTML=rows.map(function(r){
-      var cls=((r.lowvol||r.hivig)?' mk-muted':'')+(Math.abs(r.edge)>=0.08?' mk-big':'');
+      // big gaps get a "suspect" marker (multiple-comparisons trap), NOT a reward
+      // highlight; muted rows (thin/high-vig) keep their grey treatment.
+      var suspect=Math.abs(r.edge)>=0.08;
+      var cls=((r.lowvol||r.hivig)?' mk-muted':'')+(suspect?' mk-suspect':'');
+      var flag=suspect?" <span class='mk-flag' title='Large gap = most likely noise or a blind spot, not an edge'>?</span>":'';
       return "<tr class='"+cls+"'><td class='tl mk-match'>"+esc(r.match)+"</td><td class='tl'>"+r.out+"</td>"
         +"<td>"+pct(r.model)+"</td><td>"+pct(r.mkt)+"</td>"
-        +"<td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+"</td>"
+        +"<td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+flag+"</td>"
         +"<td>"+evfmt(r.model,r.mkt)+"</td><td>"+(r.vig*100).toFixed(1)+"%</td><td>"+volfmt(r.vol)+"</td></tr>";
     }).join('');
   }
   function buildTitleRows(get){
     var rows=[];
-    P.title.teams.forEach(function(t){ var mp=get(t); if(mp==null) return; rows.push({team:t.team,model:t.model,mkt:mp,edge:t.model-mp}); });
+    P.title.teams.forEach(function(t){ var mp=get(t); if(mp==null) return;
+      rows.push({team:t.team,model:t.model,mkt:mp,edge:t.model-mp,longshot:mp<TITLE_FLOOR}); });
     rows.sort(function(x,y){ return y.mkt-x.mkt; });
     return rows;
   }
@@ -1748,8 +1906,10 @@ _MARKET_JS = r"""
     lastTitleRows=rows;                        // cache for header re-sort
     rows=sortRows(rows.slice(), titleSort);
     titleEl.innerHTML=rows.map(function(r){
-      return "<tr><td class='tl mk-match'>"+esc(r.team)+"</td><td>"+pct1(r.model)+"</td><td>"+pct1(r.mkt)
-        +"</td><td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+"</td></tr>";
+      var cls=r.longshot?' mk-muted':'';
+      var flag=r.longshot?" <span class='mk-flag' title='Market prices this below 2% — edge is longshot noise'>?</span>":'';
+      return "<tr class='"+cls+"'><td class='tl mk-match'>"+esc(r.team)+"</td><td>"+pct1(r.model)+"</td><td>"+pct1(r.mkt)
+        +"</td><td class='"+(r.edge>=0?'mk-pos':'mk-neg')+"'>"+pp(r.edge)+flag+"</td></tr>";
     }).join('');
   }
 
@@ -1807,8 +1967,13 @@ _MARKET_JS = r"""
     renderMatchRows(buildMatchRows(snapMatch));
     renderTitleRows(buildTitleRows(function(t){ return t.snap!=null? t.snap/(P.title.sum||1):null; }));
     mvmFillCards(snapMatch);                  // fill card expanders from snapshot
-    if(asofEl) asofEl.textContent=P.asof+' (snapshot)';
-    if(dotEl) dotEl.className='mk-dot stale';
+    var a=snapAge(P.asof);
+    if(asofEl) asofEl.innerHTML="Snapshot from <b>"+esc(P.asof)+"</b>"
+      +(a.txt?" &middot; "+a.txt:'')+" &mdash; Refresh for live";
+    if(dotEl){ dotEl.className='mk-dot stale';
+      dotEl.title='Baked snapshot from '+P.asof+(a.txt?' ('+a.txt+')':'')+' — not live'; }
+    if(statusEl && a.days!=null && a.days>=2)
+      statusEl.textContent='This snapshot is '+a.txt+'. Click Refresh for current market odds.';
   }
   function renderLive(live){
     // Wholesale fetch failure (network / CORS / all batches timed out): keep
@@ -1825,8 +1990,9 @@ _MARKET_JS = r"""
     if(live.winner&&live.winner.markets){ live.winner.markets.forEach(function(mk){ var pr=jp(mk.outcomePrices); if(pr){ wmap[mk.groupItemTitle]=+pr[0]; tsum+=(+pr[0]); } }); }
     renderTitleRows(buildTitleRows(function(t){ var v=wmap[t.git]; return v==null?null:v/(tsum||1); }));
     mvmFillCards(get);                        // fill card expanders from live data
-    if(asofEl) asofEl.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    if(dotEl) dotEl.className='mk-dot live';
+    if(asofEl) asofEl.innerHTML="Live &middot; fetched "
+      +new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    if(dotEl){ dotEl.className='mk-dot live'; dotEl.title='Live odds, fetched just now'; }
     if(statusEl) statusEl.textContent='';
   }
 
