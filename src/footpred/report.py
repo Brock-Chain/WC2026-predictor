@@ -810,7 +810,7 @@ def _bracket_section(preds, advancement: dict | None) -> str:
     ]
     col_html = "".join(
         f"<div class='bk-col'><div class='bk-col-h'>{name}</div>"
-        f"{''.join(cells)}</div>"
+        f"<div class='bk-cells'>{''.join(cells)}</div></div>"
         for name, cells in cols
     )
 
@@ -1103,7 +1103,10 @@ def render_report(
         "<div class='eyebrow'>Bayesian hierarchical Poisson &middot; MCMC</div>"
         "<h1>World Cup 2026<br><span class='accent'>Match Predictions</span></h1>"
         f"<p class='sub'>Trained on 8,000+ international matches since 2018. "
-        f"Every probability integrates over the full posterior.{gen}</p>"
+        f"Every probability integrates over the full posterior.</p>"
+        f"<div class='freshness'><span class='fresh-dot'></span>"
+        f"Results synced {html.escape(generated_on) if generated_on else 'recently'}"
+        f" &middot; odds refresh live in <b>Model vs Market</b></div>"
         f"{tiles}"
         f"{_callouts(preds)}"
         "</div></div>"
@@ -1156,7 +1159,7 @@ def render_report(
 _CSS = """
 :root{
  --bg:#0a0e14;--bg2:#0e141d;--card:#141b26;--card2:#19212e;--ink:#eef3f8;
- --muted:#8a97a6;--faint:#5b6675;--line:#232c3a;--line2:#2c3645;
+ --muted:#9aa6b4;--faint:#7f8c9b;--line:#232c3a;--line2:#2c3645;
  --home:#34d399;--draw:#fbbf24;--away:#fb7185;--accent:#60a5fa;
  --good:#34d399;--shadow:0 8px 30px rgba(0,0,0,.35)}
 *{box-sizing:border-box}
@@ -1181,7 +1184,13 @@ h1{font-size:clamp(30px,6vw,50px);line-height:1.04;margin:0;font-weight:800;
  letter-spacing:-.02em}
 h1 .accent{background:linear-gradient(90deg,#7dd3fc,#34d399);
  -webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{color:var(--muted);margin:14px 0 26px;max-width:620px;font-size:15.5px}
+.sub{color:var(--muted);margin:14px 0 14px;max-width:620px;font-size:15.5px}
+.freshness{display:inline-flex;align-items:center;gap:8px;color:var(--muted);
+ font-size:12.5px;margin:0 0 22px;background:var(--card);border:1px solid var(--line2);
+ border-radius:20px;padding:5px 13px}
+.freshness b{color:var(--ink);font-weight:600}
+.fresh-dot{width:7px;height:7px;border-radius:50%;background:var(--home);
+ box-shadow:0 0 0 3px rgba(52,211,153,.18);flex:0 0 auto}
 
 /* metric tiles */
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
@@ -1399,12 +1408,13 @@ body[data-filter='bracket'] .search,body[data-filter='bracket'] .no-results{disp
 .bk-head h2{font-size:23px;margin:6px 0 6px}
 .bk-lead{color:var(--muted);font-size:13.5px;max-width:760px;margin:0 0 18px}
 .bk-lead b{color:var(--ink)}.bk-proj-lbl{color:var(--accent)}
-.bk-scroll{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:stretch}
-.bk-col{flex:0 0 196px;display:flex;flex-direction:column;gap:12px;
- justify-content:space-around}
+.bk-scroll{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:flex-start}
+.bk-col{flex:0 0 196px;display:flex;flex-direction:column}
+/* header at the top of each column (static: .bk-scroll is an overflow container,
+   so a sticky header would anchor to it and mis-position — see git history) */
 .bk-col-h{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
- color:var(--accent);position:sticky;top:54px;z-index:5;background:var(--bg);
- padding:8px 2px 6px;margin:0 -2px}
+ color:var(--accent);padding:2px 2px 9px}
+.bk-cells{display:flex;flex-direction:column;gap:12px}
 .bk-match{background:linear-gradient(180deg,var(--card2),var(--card));
  border:1px solid var(--line);border-radius:10px;padding:4px;display:flex;
  flex-direction:column;gap:3px}
