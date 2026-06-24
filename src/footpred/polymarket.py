@@ -48,10 +48,16 @@ _MATCH_SLUG_RE = re.compile(r"^fifwc-[a-z]+-[a-z]+-\d{4}-\d{2}-\d{2}$")
 # spellings in per-match events vs the winner market, e.g. "DR Congo" / "Congo
 # DR", "United States" / "USA" — both directions are covered here.)
 _ALIAS = {
+    # winner-market spellings
     "czechia": "Czech Republic",
     "usa": "United States",
     "turkiye": "Turkey",
     "congo dr": "DR Congo",
+    # per-match event spellings (Polymarket is inconsistent between the two)
+    "cabo verde": "Cape Verde",
+    "cote divoire": "Ivory Coast",   # "Côte d'Ivoire" after accent strip
+    "ir iran": "Iran",
+    "korea republic": "South Korea",
 }
 
 
@@ -104,6 +110,64 @@ def fetch_open_events(max_pages: int = 6) -> list[dict]:
         out.extend(batch)
         if len(batch) < 100:
             break
+    return out
+
+
+_SCORE_RE = re.compile(r"^\s*(\d+)\s*[-–]\s*(\d+)\s*$")
+
+
+def fetch_results(fixtures: Iterable[tuple], our_teams: list[str]) -> dict:
+    """Final scores from Polymarket's *settled* per-match events — the real-time
+    results source (martj42 is the historical/training feed and lags live games).
+
+    ``fixtures`` is an iterable of ``(home, away, date_str)`` (``YYYY-MM-DD``).
+    Returns ``{(home, away, date_str): (home_score, away_score)}`` for matches
+    Polymarket reports as finished, oriented to OUR home/away. Empty on failure.
+    """
+    our_index = {_norm(t): t for t in our_teams}
+    # Closed per-match events carry an ``ended`` flag + a "H-A" ``score`` string,
+    # in the event's own team order (teams[0] vs teams[1]).
+    events: list[dict] = []
+    for pg in range(8):
+        batch = _get("/events", {"series_id": SERIES_ID, "closed": "true",
+                                 "limit": 100, "offset": pg * 100,
+                                 "order": "startDate", "ascending": "false"})
+        if not batch:
+            break
+        events.extend(batch)
+        if len(batch) < 100:
+            break
+    if not events:
+        return {}
+
+    index: dict[tuple, tuple] = {}   # (pair, date) -> (first_team_our_name, g0, g1)
+    for e in events:
+        if not _MATCH_SLUG_RE.match(e.get("slug", "")):
+            continue
+        teams = e.get("teams") or []
+        score = e.get("score")
+        if len(teams) != 2 or not score:
+            continue
+        m = _SCORE_RE.match(str(score))
+        if not m:
+            continue
+        n0 = _to_our_name(teams[0].get("name", ""), our_index)
+        n1 = _to_our_name(teams[1].get("name", ""), our_index)
+        if not n0 or not n1:
+            continue
+        # Join on the SLUG's date (the official schedule date, matching our
+        # fixtures) — not eventDate, which is a UTC timestamp that rolls to the
+        # next day for late-ET kickoffs and would miss those matches.
+        date = e["slug"][-10:]
+        index[(frozenset((n0, n1)), date)] = (n0, int(m.group(1)), int(m.group(2)))
+
+    out: dict[tuple, tuple] = {}
+    for home, away, date_str in fixtures:
+        v = index.get((frozenset((home, away)), date_str))
+        if not v:
+            continue
+        first, g0, g1 = v
+        out[(home, away, date_str)] = (g0, g1) if first == home else (g1, g0)
     return out
 
 

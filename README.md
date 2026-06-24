@@ -136,11 +136,13 @@ two independent refresh loops so it stays current with **no local runs**:
 - **Odds** refresh *client-side* — the browser pulls live Polymarket prices on a
   ~10-min timer + the Refresh button. No redeploy needed.
 - **Results / forecast** refresh via a **GitHub Actions** cron
-  (`.github/workflows/refresh.yml`, every 6h + manual): it re-downloads the live
-  results feed, re-syncs played scores, regenerates the page, and pushes —
-  Vercel's Git integration auto-deploys the new static file. It **re-renders
-  only** (`run_pipeline.py render`), reusing the committed `models/trace.nc`, so
-  it needs only the slim `requirements-render.txt` (no PyMC) and runs in minutes.
+  (`.github/workflows/refresh.yml`, every 2h + manual): it pulls **live results
+  from Polymarket** (settled scores in real time — martj42 is only the
+  historical/training feed and lags live games), regenerates the page, and
+  pushes — Vercel's Git integration auto-deploys. It **re-renders only**
+  (`run_pipeline.py render`), reusing the committed `models/trace.nc`, with no
+  martj42 download and no PyMC, so it runs in ~1-2 min. (GitHub's scheduler can
+  lag 15-60 min, so a result appears within roughly that window of full-time.)
 
 Refitting the model (`run_pipeline.py update`) stays an occasional **local** step;
 commit the refreshed `trace.nc` when the model changes.

@@ -1,17 +1,17 @@
 name: Refresh predictions
 
 # Auto-refresh the hosted page WITHOUT any local run. On a schedule (and on
-# demand) this re-downloads the live results feed, re-syncs played scores,
-# re-runs the forecast + odds snapshot, and commits the regenerated page.
-# Vercel's Git integration redeploys the static site on the resulting push.
+# demand) this pulls live results + odds from Polymarket, regenerates the page,
+# and commits it; Vercel's Git integration redeploys the static site on push.
 #
-# This does NOT refit the model (no MCMC) — it reuses the committed trace, so
-# the job is cheap (~2-3 min) and needs only the slim render dependencies.
-# Live Polymarket odds refresh client-side in the browser, independent of this.
+# Results come from Polymarket (real-time, settled scores) — NOT martj42, which
+# is only the historical/training feed. No martj42 download, no MCMC refit: the
+# job reuses the committed trace and needs only the slim render dependencies
+# (~1-2 min). Live odds also refresh client-side in the browser, independently.
 
 on:
   schedule:
-    - cron: "0 */6 * * *"      # every 6 hours (UTC)
+    - cron: "0 */2 * * *"      # every 2 hours (UTC); GitHub cron may lag ~15-60m
   workflow_dispatch: {}          # manual "Run workflow" button
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
           pip install -r requirements-render.txt
           pip install -e . --no-deps
 
-      - name: Re-render (sync live results + odds snapshot; NO model refit)
+      - name: Re-render (live Polymarket results + odds; no martj42, no refit)
         run: |
           python run_pipeline.py render
           mkdir -p public
