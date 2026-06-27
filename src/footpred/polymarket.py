@@ -191,7 +191,12 @@ def _resolve_match(event: dict, by_slug: dict, our_index: dict) -> dict | None:
                 home_git, snap_h = git, snap
             else:
                 away_git, snap_a = git, snap
-    if not (home_git and away_git and draw_git):
+    # Knockout ties have no draw market (2 outcomes: each side "to advance").
+    is_ko = draw_git is None
+    if is_ko:
+        if not (home_git and away_git):
+            return None
+    elif not (home_git and away_git and draw_git):
         return None
 
     # More-markets bundle (BTTS / totals) — same base slug + suffix.
@@ -216,6 +221,7 @@ def _resolve_match(event: dict, by_slug: dict, our_index: dict) -> dict | None:
     return {
         "slug": event["slug"],
         "more_slug": more_slug if (btts_q or o25_q) else None,
+        "is_knockout": is_ko,
         "home_git": home_git, "draw_git": draw_git, "away_git": away_git,
         "btts_q": btts_q, "o25_q": o25_q,
         "volume": float(event.get("volume") or 0),

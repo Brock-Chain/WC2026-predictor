@@ -139,6 +139,29 @@ def _goal_breakdown(pred: Prediction):
     return dict(btts=btts, o15=o15, o25=o25, o35=o35, tone=tone)
 
 
+def _advance_probs(p: Prediction):
+    """Knockout 'to advance' probabilities: win in 90 + draw*(extra time + pens).
+    ET = 30 more minutes of Poisson at the match rate, then 50/50 penalties.
+    Returns (home_advance, away_advance)."""
+    from scipy.stats import poisson
+    g = p.grid
+    n = g.shape[0]
+    i = np.arange(n)
+    h90 = float(g[i[:, None] > i[None, :]].sum())
+    d90 = float(g[i[:, None] == i[None, :]].sum())
+    a90 = float(g[i[:, None] < i[None, :]].sum())
+    f = 30.0 / 90.0
+    k = np.arange(10)
+    ph = poisson.pmf(k, p.exp_home_goals * f)
+    pa = poisson.pmf(k, p.exp_away_goals * f)
+    et = np.outer(ph, pa)
+    h_et = float(et[k[:, None] > k[None, :]].sum())
+    a_et = float(et[k[:, None] < k[None, :]].sum())
+    lvl = float(et[k[:, None] == k[None, :]].sum())
+    return (h90 + d90 * (h_et + lvl * 0.5),
+            a90 + d90 * (a_et + lvl * 0.5))
+
+
 def _bar_html(p: Prediction) -> str:
     segs = [("h", p.p_home_win, "Home win"), ("d", p.p_draw, "Draw"),
             ("a", p.p_away_win, "Away win")]
@@ -955,23 +978,53 @@ def _poly_blob(preds, title_odds, odds_meta, asof: str):
             continue
         date_str = (pd.Timestamp(r.date).strftime("%Y-%m-%d")
                     if pd.notna(r.date) else "")
+        g = p.grid
+        hg, ag = g.sum(axis=1), g.sum(axis=0)
+        gb = _goal_breakdown(p)
+        is_ko = getattr(r, "stage", "Group") != "Group"
+        adv_h, adv_a = _advance_probs(p)
+        # lamH/lamA are the Poisson rates the browser uses to recompute live
+        # (in-play) fair value at any score+minute, and to derive every market.
+        model = {
+            "h": round(p.p_home_win, 4), "d": round(p.p_draw, 4),
+            "a": round(p.p_away_win, 4),
+            "btts": round(float(g[1:, 1:].sum()), 4),
+            "o15": round(float(gb["o15"]), 4),
+            "o25": round(p.p_over_2_5, 4),
+            "o35": round(float(gb["o35"]), 4),
+            "hO05": round(float(hg[1:].sum()), 4),
+            "hO15": round(float(hg[2:].sum()), 4),
+            "aO05": round(float(ag[1:].sum()), 4),
+            "aO15": round(float(ag[2:].sum()), 4),
+            "lamH": round(float(p.exp_home_goals), 3),
+            "lamA": round(float(p.exp_away_goals), 3),
+            "advH": round(adv_h, 4), "advA": round(adv_a, 4),
+        }
         meta = matches_meta.get((r.home_team, r.away_team, date_str))
-        if not meta:
-            continue
-        out_matches.append({
-            "home": r.home_team, "away": r.away_team, "date": date_str,
-            "slug": meta["slug"], "moreSlug": meta["more_slug"],
-            "homeGit": meta["home_git"], "drawGit": meta["draw_git"],
-            "awayGit": meta["away_git"],
-            "bttsQ": meta["btts_q"], "o25Q": meta["o25_q"],
-            "vol": meta["volume"], "snap": meta["snapshot"],
-            "model": {
-                "h": round(p.p_home_win, 4), "d": round(p.p_draw, 4),
-                "a": round(p.p_away_win, 4),
-                "btts": round(float(p.grid[1:, 1:].sum()), 4),
-                "o25": round(p.p_over_2_5, 4),
-            },
-        })
+        if meta:
+            out_matches.append({
+                "home": r.home_team, "away": r.away_team, "date": date_str,
+                "slug": meta["slug"], "moreSlug": meta["more_slug"],
+                "homeGit": meta["home_git"], "drawGit": meta["draw_git"],
+                "awayGit": meta["away_git"],
+                "bttsQ": meta["btts_q"], "o25Q": meta["o25_q"],
+                "vol": meta["volume"], "snap": meta["snapshot"],
+                "ko": is_ko, "model": model,
+            })
+        else:
+            # Market not resolved yet (e.g. a knockout tie before Polymarket
+            # opens its event). Bake the model so the page is "ready"; the market
+            # column fills in on the next render once the event opens.
+            slug = ("fifwc-" + r.home_team.lower().replace(" ", "-")
+                    + "-" + r.away_team.lower().replace(" ", "-") + "-" + date_str)
+            out_matches.append({
+                "home": r.home_team, "away": r.away_team, "date": date_str,
+                "slug": slug, "moreSlug": slug + "-more-markets",
+                "homeGit": r.home_team, "drawGit": None, "awayGit": r.away_team,
+                "bttsQ": None, "o25Q": None, "vol": 0,
+                "snap": {"h": None, "d": None, "a": None, "btts": None, "o25": None},
+                "ko": is_ko, "pending": True, "model": model,
+            })
 
     out_title = []
     teams_meta = title_meta.get("teams", {})
@@ -992,6 +1045,54 @@ def _poly_blob(preds, title_odds, odds_meta, asof: str):
                   "sum": round(title_meta.get("sum", 1.0), 5),
                   "teams": out_title},
     }
+
+
+def _live_section(blob) -> str:
+    """Interactive in-play 'Live' tab: pick a game, set the current score and
+    minute, and the browser recomputes the model's fair value for every market
+    from the baked Poisson rates, comparing to live Polymarket on demand."""
+    if not blob or not blob.get("matches"):
+        return ("<section class='live' id='live'>"
+                "<div class='mk-head'><h2>Live Fair Value</h2></div>"
+                "<p class='mk-lead'>No upcoming matches to track yet.</p></section>")
+    return (
+        "<section class='live' id='live'>"
+        "<div class='mk-head'><h2>Live Fair Value</h2></div>"
+        "<div class='mk-disclaimer'>"
+        "<b>A fair-value anchor &mdash; not an over-reaction edge.</b> Set the "
+        "current score and minute; the model recomputes each market from its "
+        "Poisson rates (remaining goals over the time left). Hit <b>Refresh odds</b> "
+        "to pull live Polymarket and see the gap. In-play markets are efficient "
+        "&mdash; use this to keep your head after a goal, not to expect free money."
+        "</div>"
+        "<div class='lc-controls'>"
+        "<label class='lc-field'>Match"
+        "<select class='lc-game' id='lc-game'></select></label>"
+        "<div class='lc-field'>Score"
+        "<div class='lc-step'>"
+        "<span id='lc-hn'>Home</span>"
+        "<button type='button' onclick=\"lcStep('h',-1)\">&minus;</button>"
+        "<span class='lc-val' id='lc-h'>0</span>"
+        "<button type='button' onclick=\"lcStep('h',1)\">+</button>"
+        "<span style='width:8px;display:inline-block'></span>"
+        "<button type='button' onclick=\"lcStep('a',-1)\">&minus;</button>"
+        "<span class='lc-val' id='lc-a'>0</span>"
+        "<button type='button' onclick=\"lcStep('a',1)\">+</button>"
+        "<span id='lc-an'>Away</span>"
+        "</div></div>"
+        "<div class='lc-field'>Minute"
+        "<div class='lc-step'>"
+        "<button type='button' onclick=\"lcStep('m',-5)\">&minus;</button>"
+        "<span class='lc-val' id='lc-m'>0</span>"
+        "<button type='button' onclick=\"lcStep('m',5)\">+</button>"
+        "</div></div>"
+        "<button class='lc-refresh' type='button' id='lc-refresh' onclick='lcRefresh()'>"
+        "&#8635; Refresh odds</button>"
+        "</div>"
+        "<div id='lc-status' style='font-size:12px;color:#8fa3b5'></div>"
+        "<div id='lc-out'></div>"
+        "</section>"
+    )
 
 
 def _market_section(blob) -> str:
@@ -1185,6 +1286,7 @@ def render_report(
     poly_blob = _poly_blob(preds, title_odds, odds_meta,
                            asof=generated_on or "snapshot")
     market_html = _market_section(poly_blob)
+    live_html = _live_section(poly_blob)
     poly_json = (json.dumps(poly_blob).replace("<", "\\u003c")
                  if poly_blob else "null")
 
@@ -1217,7 +1319,7 @@ def render_report(
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>World Cup 2026 — Match Predictions</title>"
-        f"<style>{_CSS}</style></head><body>"
+        f"<style>{_CSS}</style><style>{_LIVE_CSS}</style></head><body>"
         "<div class='hero'><div class='wrap'>"
         "<div class='eyebrow'>Bayesian hierarchical Poisson &middot; MCMC</div>"
         "<h1>World Cup 2026<br><span class='accent'>Match Predictions</span></h1>"
@@ -1236,6 +1338,7 @@ def render_report(
         "<button class='f-btn' data-filter='played' onclick=\"setFilter('played',this)\">Results</button>"
         "<button class='f-btn' data-filter='bracket' onclick=\"setFilter('bracket',this)\">Bracket</button>"
         "<button class='f-btn' data-filter='market' onclick=\"setFilter('market',this)\">Model vs Market</button>"
+        "<button class='f-btn' data-filter='live' onclick=\"setFilter('live',this)\">Live</button>"
         "<button class='f-btn' data-filter='method' onclick=\"setFilter('method',this)\">Method</button>"
         "</div>"
         "<input id='search' class='search' type='search' autocomplete='off' "
@@ -1258,6 +1361,7 @@ def render_report(
         f"{results_html}"
         f"{bracket_html}"
         f"{market_html}"
+        f"{live_html}"
         f"{_method_section(metrics, len(teams))}"
         "<footer>Double-Poisson with hierarchical attack/defense strengths and "
         "neutral-gated home advantage, fit via MCMC (PyMC/nutpie). "
@@ -1269,6 +1373,7 @@ def render_report(
         f"<script>window.POLY={poly_json};</script>"
         f"<script>{_JS}</script>"
         "<script>" + _MARKET_JS + "</script>"
+        "<script>" + _LIVE_JS + "</script>"
         "</body></html>"
     )
     out_path.write_text(doc, encoding="utf-8")
@@ -1711,6 +1816,39 @@ body.searching .titleodds,body.searching .insight{display:none}
 }
 """
 
+_LIVE_CSS = """
+.live{display:none;max-width:780px;margin:0 auto}
+body[data-filter='live'] .live{display:block}
+body[data-filter='live'] section.group,
+body[data-filter='live'] .chrono,
+body[data-filter='live'] .bracket,
+body[data-filter='live'] .market,
+body[data-filter='live'] .method,
+body[data-filter='live'] .titleodds,
+body[data-filter='live'] .insight,
+body[data-filter='live'] .strength,
+body[data-filter='live'] .legend,
+body[data-filter='live'] .pills,
+body[data-filter='live'] .search,
+body[data-filter='live'] .no-results{display:none}
+.lc-controls{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;margin:16px 0}
+.lc-field{display:flex;flex-direction:column;gap:5px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#8fa3b5}
+.lc-step{display:flex;align-items:center;gap:7px}
+.lc-step button{width:30px;height:30px;border-radius:7px;border:1px solid #2a3a4a;background:#16212e;color:#dfe9f2;font-size:17px;line-height:1;cursor:pointer}
+.lc-step button:hover{background:#1d2c3c}
+.lc-val{min-width:24px;text-align:center;font-size:18px;font-weight:700;color:#fff}
+.lc-step #lc-hn,.lc-step #lc-an{font-size:12px;color:#8fa3b5;text-transform:none}
+.lc-game{padding:9px;border-radius:8px;background:#16212e;color:#eaf1f8;border:1px solid #2a3a4a;min-width:240px;font-size:14px}
+.lc-refresh{padding:10px 15px;border-radius:8px;border:1px solid #2a4a6a;background:#1c3047;color:#cfe3ff;cursor:pointer;font-size:14px}
+.lc-refresh:hover{background:#244064}
+.lc-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+.lc-table th,.lc-table td{padding:8px 10px;border-bottom:1px solid #1d2935;text-align:right}
+.lc-table th{color:#8fa3b5;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.lc-table th:first-child,.lc-table td:first-child{text-align:left;color:#dfe9f2}
+.lc-pos{color:#3fb950;font-weight:600}.lc-neg{color:#f06d6d;font-weight:600}.lc-mut{color:#6b7c8c}
+"""
+
+
 _JS = """
 function setFilter(f,btn){
   document.body.setAttribute('data-filter',f);
@@ -1775,6 +1913,76 @@ document.addEventListener('mouseout',e=>{ if(e.target.closest('[data-s]')) tip.c
 # resolved Polymarket slugs/market-ids + a price snapshot), fetches live prices
 # from the keyless Gamma API in the browser, de-vigs, computes edges, and fills
 # the two tables. No matching logic here — that was resolved at build time.
+_LIVE_JS = r"""
+(function(){
+  var P=window.POLY, sel=document.getElementById('lc-game');
+  if(!P||!P.matches||!sel) return;
+  var GAMMA='https://gamma-api.polymarket.com';
+  var ups=P.matches, st={h:0,a:0,m:0}, odds=null, oddsIdx=-1, loading=false;
+  function $(id){return document.getElementById(id);}
+  ups.forEach(function(m,i){var o=document.createElement('option');o.value=i;
+    o.textContent=m.home+' v '+m.away+(m.ko?'  ·  KO':'');sel.appendChild(o);});
+  function pois(k,lam){if(lam<=0)return k===0?1:0;var lp=-lam+k*Math.log(lam);
+    for(var j=2;j<=k;j++)lp-=Math.log(j);return Math.exp(lp);}
+  function dist(lam,K){var a=[];for(var k=0;k<K;k++)a.push(pois(k,lam));return a;}
+  function modelLive(m,hs,as_,mn){
+    var K=14,f=Math.max(0,(90-mn)/90),ph=dist(m.model.lamH*f,K),pa=dist(m.model.lamA*f,K);
+    var pH=0,pD=0,pA=0,o15=0,o25=0,o35=0,i,j;
+    for(i=0;i<K;i++)for(j=0;j<K;j++){var p=ph[i]*pa[j],fh=hs+i,fa=as_+j,t=fh+fa;
+      if(fh>fa)pH+=p;else if(fh===fa)pD+=p;else pA+=p;
+      if(t>=2)o15+=p;if(t>=3)o25+=p;if(t>=4)o35+=p;}
+    var hg1=hs>=1?1:1-ph[0],ag1=as_>=1?1:1-pa[0],btts=hg1*ag1;
+    var hO15=hs>=2?1:(hs===1?1-ph[0]:1-ph[0]-ph[1]);
+    var aO15=as_>=2?1:(as_===1?1-pa[0]:1-pa[0]-pa[1]);
+    var adv=null;
+    if(m.ko){var fe=30/90,pe=dist(m.model.lamH*fe,K),qe=dist(m.model.lamA*fe,K),he=0,ae=0,le=0,x,y;
+      for(x=0;x<K;x++)for(y=0;y<K;y++){var pp=pe[x]*qe[y];if(x>y)he+=pp;else if(x<y)ae+=pp;else le+=pp;}
+      adv=pH+pD*(he+le*0.5);}
+    return {h:pH,d:pD,a:pA,o15:o15,o25:o25,o35:o35,btts:btts,hO15:hO15,aO15:aO15,adv:adv};
+  }
+  function price0(k){try{var v=k.outcomePrices;v=(typeof v==='string')?JSON.parse(v):v;return v?+v[0]:null;}catch(e){return null;}}
+  function lcRefresh(){
+    var m=ups[+sel.value];if(!m||loading)return;loading=true;$('lc-status').textContent='Fetching live odds…';
+    var us=[GAMMA+'/events?slug='+encodeURIComponent(m.slug)];
+    if(m.moreSlug)us.push(GAMMA+'/events?slug='+encodeURIComponent(m.moreSlug));
+    Promise.all(us.map(function(u){return fetch(u).then(function(r){return r.json();}).catch(function(){return null;});}))
+    .then(function(res){
+      var main=res[0]&&res[0][0],more=res[1]&&res[1][0],o={h:null,d:null,a:null,o25:null,btts:null};
+      if(main&&main.markets)main.markets.forEach(function(k){var g=k.groupItemTitle||'',p=price0(k);
+        if(/draw/i.test(g))o.d=p;else if(g===m.homeGit)o.h=p;else if(g===m.awayGit)o.a=p;});
+      if(more&&more.markets)more.markets.forEach(function(k){var q=k.question||'';
+        if(q===m.o25Q)o.o25=price0(k);else if(q===m.bttsQ)o.btts=price0(k);});
+      if(o.h!=null&&o.a!=null){var s=o.h+(o.d||0)+o.a;if(s>0){o.h/=s;if(o.d!=null)o.d/=s;o.a/=s;}}
+      odds=o;oddsIdx=+sel.value;loading=false;
+      $('lc-status').textContent='Live odds @ '+new Date().toLocaleTimeString();lcRender();
+    }).catch(function(){loading=false;$('lc-status').textContent='Could not fetch live odds (market may not be open).';});
+  }
+  function lcStep(k,d){var mx=k==='m'?95:20;st[k]=Math.max(0,Math.min(mx,st[k]+d));$('lc-'+k).textContent=st[k];lcRender();}
+  function pc(x){return x==null?'—':(x*100).toFixed(0)+'%';}
+  function edgeCell(mo,mk){if(mk==null)return "<td class='lc-mut'>—</td>";
+    var e=(mo-mk)*100,c=e>0.5?'lc-pos':(e<-0.5?'lc-neg':'lc-mut');
+    return "<td class='"+c+"'>"+(e>0?'+':'')+e.toFixed(1)+"</td>";}
+  function lcRender(){
+    var m=ups[+sel.value];if(!m)return;
+    $('lc-hn').textContent=m.home;$('lc-an').textContent=m.away;
+    var mod=modelLive(m,st.h,st.a,st.m),o=(oddsIdx===+sel.value)?odds:null;
+    var rows=[['Home win — '+m.home,mod.h,o?o.h:null],['Draw',mod.d,o?o.d:null],['Away win — '+m.away,mod.a,o?o.a:null]];
+    if(m.ko&&mod.adv!=null){rows.push([m.home+' to advance',mod.adv,null]);rows.push([m.away+' to advance',1-mod.adv,null]);}
+    rows.push(['Over 1.5',mod.o15,null]);rows.push(['Over 2.5',mod.o25,o?o.o25:null]);rows.push(['Over 3.5',mod.o35,null]);
+    rows.push(['BTTS',mod.btts,o?o.btts:null]);rows.push([m.home+' 2+ goals',mod.hO15,null]);rows.push([m.away+' 2+ goals',mod.aO15,null]);
+    var h="<table class='lc-table'><thead><tr><th>Market</th><th>Model</th><th>Market</th><th>Edge (pp)</th></tr></thead><tbody>";
+    rows.forEach(function(r){h+="<tr><td>"+r[0]+"</td><td>"+pc(r[1])+"</td><td>"+pc(r[2])+"</td>"+edgeCell(r[1],r[2])+"</tr>";});
+    h+="</tbody></table>";
+    if(m.pending)h+="<p style='color:#6b7c8c;margin-top:10px;font-size:13px'>Market not open yet &mdash; showing model fair value only.</p>";
+    $('lc-out').innerHTML=h;
+  }
+  sel.addEventListener('change',function(){st={h:0,a:0,m:0};$('lc-h').textContent=0;$('lc-a').textContent=0;$('lc-m').textContent=0;odds=null;oddsIdx=-1;$('lc-status').textContent='';lcRender();});
+  window.lcStep=lcStep;window.lcRefresh=lcRefresh;window.lcRender=lcRender;
+  lcRender();
+})();
+"""
+
+
 _MARKET_JS = r"""
 (function(){
   var P = window.POLY;
