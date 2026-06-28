@@ -1925,6 +1925,7 @@ _LIVE_JS = r"""
   function pois(k,lam){if(lam<=0)return k===0?1:0;var lp=-lam+k*Math.log(lam);
     for(var j=2;j<=k;j++)lp-=Math.log(j);return Math.exp(lp);}
   function dist(lam,K){var a=[];for(var k=0;k<K;k++)a.push(pois(k,lam));return a;}
+  function tOver(need,cur,p){var k=need-cur;if(k<=0)return 1;var s=0;for(var x=0;x<k;x++)s+=(p[x]||0);return 1-s;}
   function modelLive(m,hs,as_,mn){
     var K=14,f=Math.max(0,(90-mn)/90),ph=dist(m.model.lamH*f,K),pa=dist(m.model.lamA*f,K);
     var pH=0,pD=0,pA=0,o15=0,o25=0,o35=0,i,j;
@@ -1932,13 +1933,13 @@ _LIVE_JS = r"""
       if(fh>fa)pH+=p;else if(fh===fa)pD+=p;else pA+=p;
       if(t>=2)o15+=p;if(t>=3)o25+=p;if(t>=4)o35+=p;}
     var hg1=hs>=1?1:1-ph[0],ag1=as_>=1?1:1-pa[0],btts=hg1*ag1;
-    var hO15=hs>=2?1:(hs===1?1-ph[0]:1-ph[0]-ph[1]);
-    var aO15=as_>=2?1:(as_===1?1-pa[0]:1-pa[0]-pa[1]);
+    var hO05=tOver(1,hs,ph),hO15=tOver(2,hs,ph),hO25=tOver(3,hs,ph);
+    var aO05=tOver(1,as_,pa),aO15=tOver(2,as_,pa),aO25=tOver(3,as_,pa);
     var adv=null;
     if(m.ko){var fe=30/90,pe=dist(m.model.lamH*fe,K),qe=dist(m.model.lamA*fe,K),he=0,ae=0,le=0,x,y;
       for(x=0;x<K;x++)for(y=0;y<K;y++){var pp=pe[x]*qe[y];if(x>y)he+=pp;else if(x<y)ae+=pp;else le+=pp;}
       adv=pH+pD*(he+le*0.5);}
-    return {h:pH,d:pD,a:pA,o15:o15,o25:o25,o35:o35,btts:btts,hO15:hO15,aO15:aO15,adv:adv};
+    return {h:pH,d:pD,a:pA,o15:o15,o25:o25,o35:o35,btts:btts,hO05:hO05,hO15:hO15,hO25:hO25,aO05:aO05,aO15:aO15,aO25:aO25,adv:adv};
   }
   function price0(k){try{var v=k.outcomePrices;v=(typeof v==='string')?JSON.parse(v):v;return v?+v[0]:null;}catch(e){return null;}}
   function lcRefresh(){
@@ -1969,7 +1970,9 @@ _LIVE_JS = r"""
     var rows=[['Home win — '+m.home,mod.h,o?o.h:null],['Draw',mod.d,o?o.d:null],['Away win — '+m.away,mod.a,o?o.a:null]];
     if(m.ko&&mod.adv!=null){rows.push([m.home+' to advance',mod.adv,null]);rows.push([m.away+' to advance',1-mod.adv,null]);}
     rows.push(['Over 1.5',mod.o15,null]);rows.push(['Over 2.5',mod.o25,o?o.o25:null]);rows.push(['Over 3.5',mod.o35,null]);
-    rows.push(['BTTS',mod.btts,o?o.btts:null]);rows.push([m.home+' 2+ goals',mod.hO15,null]);rows.push([m.away+' 2+ goals',mod.aO15,null]);
+    rows.push(['BTTS',mod.btts,o?o.btts:null]);
+    rows.push([m.home+' over 0.5',mod.hO05,null]);rows.push([m.home+' over 1.5',mod.hO15,null]);rows.push([m.home+' over 2.5',mod.hO25,null]);
+    rows.push([m.away+' over 0.5',mod.aO05,null]);rows.push([m.away+' over 1.5',mod.aO15,null]);rows.push([m.away+' over 2.5',mod.aO25,null]);
     var h="<table class='lc-table'><thead><tr><th>Market</th><th>Model</th><th>Market</th><th>Edge (pp)</th></tr></thead><tbody>";
     rows.forEach(function(r){h+="<tr><td>"+r[0]+"</td><td>"+pc(r[1])+"</td><td>"+pc(r[2])+"</td>"+edgeCell(r[1],r[2])+"</tr>";});
     h+="</tbody></table>";
