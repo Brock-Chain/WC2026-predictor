@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import edge_board
 from .flags_svg import flag_svg
 from .predict import Prediction, predict
 from .simulate import (
@@ -266,7 +267,8 @@ def _match_card(row, pred: Prediction | None) -> str:
                 f"insufficient recent data (unseen in the 2018+ window).</div>"
                 f"</div>")
 
-    mi, mj, mp = pred.top_scorelines(1)[0]
+    top3 = pred.top_scorelines(3)
+    mi, mj, mp = top3[0]
     conf_lbl, conf_cls = _confidence(pred)
     fav = _result_label(pred)
     state = "played" if played else "upcoming"
@@ -339,6 +341,23 @@ def _match_card(row, pred: Prediction | None) -> str:
         f"</div>"
     )
 
+    # Scoreline distribution: football scores are low-frequency, so the single
+    # modal score (headlined above) is only ~10-18% likely and barely ahead of
+    # the next few. Showing the top-3 makes clear the "prediction" is a spread,
+    # not a lock on one scoreline (upcoming only — played cards show the result).
+    scores_html = ""
+    if not played:
+        chips = " ".join(
+            f"<span>{i}&#8211;{j} <b>{_pct(pr)}</b></span>" for i, j, pr in top3
+        )
+        scores_html = (
+            f"<div class='goals scores' title='The three most likely exact "
+            f"scores and their probabilities. Even the top score is only "
+            f"{_pct(top3[0][2])} likely and sits just ahead of the next few, so "
+            f"treat this as a distribution, not a single predicted scoreline.'>"
+            f"<span class='scores-lbl'>Top scores</span>{chips}</div>"
+        )
+
     # Per-card "Model vs Market" expander (upcoming only). Emitted hidden; the
     # market JS reveals + fills it only when window.POLY has a matching entry,
     # using the SAME live fetch (or baked snapshot) as the Model-vs-Market tab.
@@ -359,7 +378,7 @@ def _match_card(row, pred: Prediction | None) -> str:
         f"<span class='meta'>{meta}</span></div>"
         f"{_bar_html(pred)}"
         f"<div class='m-body'>"
-        f"<div class='m-left'>{headline}{stats}</div>"
+        f"<div class='m-left'>{headline}{stats}{scores_html}</div>"
         f"<div class='m-right'>{_heatmap_html(pred, actual)}</div>"
         f"</div>{expander}</div>"
     )
@@ -1047,6 +1066,95 @@ def _poly_blob(preds, title_odds, odds_meta, asof: str):
     }
 
 
+def _bets_section() -> str:
+    """The 'Best Bets' tab: curated recommendations with their full backing data,
+    plus the penalty-shootout scout (keeper reactor-vs-pre-committer, shooters,
+    who wins a shootout). Data lives in edge_board.py; this only renders it."""
+    cards = []
+    for b in edge_board.BEST_BETS:
+        is_bet = b["status"] == "BET"
+        signals = "".join(f"<li>{html.escape(s)}</li>" for s in b["signals"])
+        edge_cls = "edge-pos" if is_bet else "edge-watch"
+        badge_cls = "bc-bet" if is_bet else "bc-watch"
+        cards.append(
+            f"<div class='bet-card {badge_cls}'>"
+            f"<div class='bc-top'><span class='bc-badge {badge_cls}'>"
+            f"{html.escape(b['status'])}</span>"
+            f"<span class='bc-title'>{html.escape(b['bet'])}</span>"
+            f"<span class='bc-price'>{html.escape(b['game'])} &middot; "
+            f"{html.escape(b['date'])}</span></div>"
+            f"<div class='bc-nums'>"
+            f"<span>Model <b>{html.escape(b['model'])}</b></span>"
+            f"<span>Market <b>{html.escape(b['market'])}</b></span>"
+            f"<span class='{edge_cls}'>Edge <b>{html.escape(b['edge'])}</b></span>"
+            f"<span>Conviction <b>{html.escape(b['conviction'])}</b></span>"
+            f"<span>Size <b>{html.escape(b['size'])}</b></span></div>"
+            f"<p class='bc-mech'>{html.escape(b['mechanism'])}</p>"
+            f"<ul class='bc-signals'>{signals}</ul>"
+            f"<p class='bc-caveat'>&#9888;&#65039; {html.escape(b['caveat'])}</p>"
+            f"</div>"
+        )
+
+    def _gk(t):
+        name, style = t
+        cls = "st-" + style.replace(" ", "").replace("-", "")
+        return (f"<b>{html.escape(name)}</b> "
+                f"<span class='pc-style {cls}'>{html.escape(style)}</span>")
+
+    pen = []
+    for p in edge_board.PENALTY_SCOUT:
+        so_home = p["so_home"]
+        so_away = 100 - so_home
+        pen.append(
+            f"<div class='pen-card'>"
+            f"<div class='pc-top'><span class='pc-game'>{_flag(p['home'])} "
+            f"{html.escape(p['home'])} <span class='pc-v'>v</span> "
+            f"{html.escape(p['away'])} {_flag(p['away'])}</span>"
+            f"<span class='pc-date'>{html.escape(p['date'])}</span></div>"
+            f"<div class='pc-so'><span class='pc-sobar'>"
+            f"<span class='pc-sofill' style='width:{so_home}%'></span></span>"
+            f"<span class='pc-sotext'>Shootout&nbsp; {html.escape(p['home'])} "
+            f"<b>{so_home}%</b> / {html.escape(p['away'])} <b>{so_away}%</b> "
+            f"&middot; draw90 {p['draw90']}% &middot; edge <b>{html.escape(p['edge'])}"
+            f"</b></span></div>"
+            f"<div class='pc-gks'>"
+            f"<div class='pc-gk'>&#129508; {html.escape(p['home'])}: {_gk(p['home_gk'])}</div>"
+            f"<div class='pc-gk'>&#129508; {html.escape(p['away'])}: {_gk(p['away_gk'])}</div>"
+            f"</div>"
+            f"<div class='pc-takers'>"
+            f"<span><b>{html.escape(p['home'])}:</b> {html.escape(p['home_takers'])}</span>"
+            f"<span><b>{html.escape(p['away'])}:</b> {html.escape(p['away_takers'])}</span>"
+            f"</div>"
+            f"<p class='pc-note'>{html.escape(p['note'])}</p>"
+            f"</div>"
+        )
+
+    return (
+        "<section class='bets' id='bets'>"
+        "<div class='mk-head'><h2>Best Bets</h2></div>"
+        "<div class='mk-disclaimer'>"
+        "<b>Only named edges appear here.</b> Curated from the model vs the market "
+        "plus the external signals the goals-only model is blind to (injuries, "
+        "rotation, penalty-shootout profiles). Divergence is not value &mdash; a "
+        "bet earns a slot only when we can name why the market is wrong. "
+        f"As of {html.escape(edge_board.AS_OF)}. Informational, not betting advice."
+        "</div>"
+        f"<div class='bet-cards'>{''.join(cards)}</div>"
+        f"<p class='bets-pass'>{html.escape(edge_board.PASS_NOTE)}</p>"
+        "<h3 class='bets-h3'>Penalty-shootout scout"
+        "<span class='mk-sub'>keeper style &middot; shooters &middot; who wins a shootout</span></h3>"
+        "<p class='bets-note'>A 90-minute draw goes to extra time, then penalties. "
+        "Our model assumes a naive 50/50 shootout; this replaces it with researched "
+        "numbers. <b>Keeper style:</b> <i>pre-committer</i> dives early off a "
+        "scouted dossier, <i>reactor</i> waits and reads the shot, <i>mixed</i> "
+        "adds deception, <i>unknown</i> has no public profile. Penalties decide "
+        "only ~3&ndash;8% of ties, so this is a tiebreaker &mdash; except where a "
+        "keeper is elite (e.g. Bono).</p>"
+        f"<div class='pen-cards'>{''.join(pen)}</div>"
+        "</section>"
+    )
+
+
 def _live_section(blob) -> str:
     """Interactive in-play 'Live' tab: pick a game, set the current score and
     minute, and the browser recomputes the model's fair value for every market
@@ -1287,6 +1395,7 @@ def render_report(
                            asof=generated_on or "snapshot")
     market_html = _market_section(poly_blob)
     live_html = _live_section(poly_blob)
+    bets_html = _bets_section()
     poly_json = (json.dumps(poly_blob).replace("<", "\\u003c")
                  if poly_blob else "null")
 
@@ -1319,7 +1428,8 @@ def render_report(
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>World Cup 2026 — Match Predictions</title>"
-        f"<style>{_CSS}</style><style>{_LIVE_CSS}</style></head><body>"
+        f"<style>{_CSS}</style><style>{_LIVE_CSS}</style>"
+        f"<style>{_BETS_CSS}</style></head><body>"
         "<div class='hero'><div class='wrap'>"
         "<div class='eyebrow'>Bayesian hierarchical Poisson &middot; MCMC</div>"
         "<h1>World Cup 2026<br><span class='accent'>Match Predictions</span></h1>"
@@ -1337,6 +1447,7 @@ def render_report(
         "<button class='f-btn' data-filter='upcoming' onclick=\"setFilter('upcoming',this)\">Upcoming</button>"
         "<button class='f-btn' data-filter='played' onclick=\"setFilter('played',this)\">Results</button>"
         "<button class='f-btn' data-filter='bracket' onclick=\"setFilter('bracket',this)\">Bracket</button>"
+        "<button class='f-btn f-bets' data-filter='bets' onclick=\"setFilter('bets',this)\">&#9733; Best Bets</button>"
         "<button class='f-btn' data-filter='market' onclick=\"setFilter('market',this)\">Model vs Market</button>"
         "<button class='f-btn' data-filter='live' onclick=\"setFilter('live',this)\">Live</button>"
         "<button class='f-btn' data-filter='method' onclick=\"setFilter('method',this)\">Method</button>"
@@ -1360,6 +1471,7 @@ def render_report(
         f"{chrono_html}"
         f"{results_html}"
         f"{bracket_html}"
+        f"{bets_html}"
         f"{market_html}"
         f"{live_html}"
         f"{_method_section(metrics, len(teams))}"
@@ -1814,6 +1926,66 @@ body.searching .titleodds,body.searching .insight{display:none}
  .to-row{grid-template-columns:20px minmax(78px,1fr) 1.5fr 42px;gap:7px}
  .to-row .to-sub:last-child{display:none}
 }
+"""
+
+_BETS_CSS = """
+.f-bets{color:var(--draw)!important}
+.bets{display:none;max-width:900px;margin:0 auto}
+body[data-filter='bets'] .bets{display:block}
+body[data-filter='bets'] section.group,body[data-filter='bets'] .chrono,
+body[data-filter='bets'] .bracket,body[data-filter='bets'] .market,
+body[data-filter='bets'] .live,body[data-filter='bets'] .method,
+body[data-filter='bets'] .titleodds,body[data-filter='bets'] .insight,
+body[data-filter='bets'] .legend,body[data-filter='bets'] .pills,
+body[data-filter='bets'] .search,body[data-filter='bets'] .no-results{display:none}
+.bets-pass{color:var(--faint);font-size:12.5px;margin:14px 2px 28px;line-height:1.5;
+ border-left:2px solid var(--line2);padding-left:10px}
+.bets-h3{font-size:18px;margin:10px 0 4px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.bets-note{color:var(--muted);font-size:13px;max-width:860px;line-height:1.55;margin:0 0 16px}
+.bets-note b{color:var(--ink)} .bets-note i{color:var(--ink);font-style:normal;font-weight:600}
+.bet-cards{display:flex;flex-direction:column;gap:14px;margin:8px 0}
+.bet-card{background:linear-gradient(180deg,var(--card2),var(--card));
+ border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.bet-card.bc-bet{border-left:3px solid var(--home)}
+.bet-card.bc-watch{border-left:3px solid var(--draw)}
+.bc-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bc-badge{font-size:11px;font-weight:800;letter-spacing:.05em;padding:3px 8px;border-radius:6px}
+.bc-badge.bc-bet{background:var(--home);color:#04121f}
+.bc-badge.bc-watch{background:var(--draw);color:#04121f}
+.bc-title{font-size:17px;font-weight:700;color:var(--ink)}
+.bc-price{margin-left:auto;color:var(--muted);font-size:12.5px}
+.bc-nums{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);
+ background:#0a0e14;border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin:11px 0}
+.bc-nums b{color:var(--ink);font-size:13.5px}
+.bc-nums .edge-pos b{color:var(--home)} .bc-nums .edge-watch b{color:var(--draw)}
+.bc-mech{color:var(--muted);font-size:13.5px;line-height:1.6;margin:6px 0}
+.bc-signals{margin:8px 0;padding-left:18px;color:var(--muted);font-size:13px}
+.bc-signals li{margin:4px 0}
+.bc-caveat{color:var(--faint);font-size:12.5px;line-height:1.5;margin:9px 0 0;
+ border-left:2px solid var(--line2);padding-left:10px}
+.pen-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:720px){.pen-cards{grid-template-columns:1fr}}
+.pen-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+.pc-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pc-game{font-weight:700;font-size:13.5px;color:var(--ink)}
+.pc-v{color:var(--faint);font-weight:400}
+.pc-date{color:var(--faint);font-size:11.5px;white-space:nowrap}
+.pc-so{margin:9px 0 6px}
+.pc-sobar{display:block;height:6px;background:var(--away);border-radius:4px;overflow:hidden;margin-bottom:5px}
+.pc-sofill{display:block;height:100%;background:var(--home)}
+.pc-sotext{font-size:11.5px;color:var(--muted)} .pc-sotext b{color:var(--ink)}
+.pc-gks{display:flex;flex-direction:column;gap:3px;margin:8px 0;font-size:12.5px;color:var(--muted)}
+.pc-gk b{color:var(--ink)}
+.pc-style{font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px;margin-left:2px;
+ text-transform:uppercase;letter-spacing:.03em}
+.st-precommitter{background:rgba(167,139,250,.18);color:#c4b5fd}
+.st-reactor{background:rgba(56,189,248,.16);color:#7dd3fc}
+.st-mixed{background:rgba(52,211,153,.16);color:#6ee7b7}
+.st-unknown{background:rgba(148,163,184,.14);color:#9aa6b4}
+.pc-takers{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--faint);margin:6px 0}
+.pc-takers b{color:var(--muted)}
+.pc-note{font-size:11.5px;color:var(--muted);line-height:1.5;margin:8px 0 0;
+ border-top:1px solid var(--line);padding-top:8px}
 """
 
 _LIVE_CSS = """
