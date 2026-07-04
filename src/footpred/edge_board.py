@@ -13,79 +13,92 @@ with a NAMED mechanism the market hasn't priced belong in BEST_BETS.
 from __future__ import annotations
 
 # Round + date this board reflects (shown in the header).
-AS_OF = "2026-07-01 · Round of 32 → Round of 16"
+AS_OF = "2026-07-04 · Round of 16"
 
 # --- Best bets: status is BET (actionable) / WATCH (conditional) -------------
+# R16 read: a very sharp slate. Opta + the sportsbooks agree with the market on
+# six of eight games (our model's divergences are its known blind spots). The two
+# actionable spots are the same shape — Polymarket underpricing the quality AWAY
+# side's "to advance" because home money floods the host — and both are confirmed
+# by a second independent estimate (Opta) sitting ABOVE the soft Polymarket line.
 BEST_BETS = [
     {
         "status": "BET",
-        "bet": "Belgium to advance",
-        "game": "Belgium v Senegal",
-        "date": "Jul 1 · Seattle",
-        "market": "~60%",
-        "model": "70%",
-        "edge": "+10pp",
-        "conviction": "Medium",
-        "size": "2 units (≈½-Kelly on a conservative 65% fair)",
+        "bet": "England to advance",
+        "game": "Mexico v England",
+        "date": "Jul 5 · Mexico City (Azteca)",
+        "market": "~56%",
+        "model": "66%",
+        "edge": "+4 to +10pp",
+        "conviction": "Medium-low",
+        "size": "1 unit (small) — Polymarket to-advance market only",
         "mechanism": (
-            "Three independent signals point the same way. (1) The model rates "
-            "Belgium's regulation advance ABOVE the market — the opposite of its "
-            "usual under-favorite bias, so it survives the bias filter. (2) A "
-            "nameable penalty edge: Courtois is a dossier-driven pre-committer, "
-            "while Senegal's shootout specialist Édouard Mendy is OUT — his "
-            "untested backup Diaw replaces him. (3) Belgium's takers (Lukaku 85%, "
-            "De Bruyne 75%) outrank Senegal's."
+            "A triangulation edge, not a lone-model call. The sharper, more-liquid "
+            "sportsbooks price England ~60% to advance and Opta's tournament ratio "
+            "implies ~66% — BOTH above Polymarket's soft ~56%. The Azteca altitude "
+            "(2,240m — a real factor our goals-only model under-weights) is ALREADY "
+            "baked into those sharp numbers, and they are STILL above Polymarket. So "
+            "the gap is Polymarket home/public bias on Mexico, not new information "
+            "the sharps missed. Buy England-to-advance where it is cheap."
         ),
         "signals": [
-            "Model advance 70% vs market 60% (+10pp) — contra the under-favorite bias",
-            "Courtois = pre-committer with confirmed shooter dossiers",
-            "Senegal's shootout hero Mendy OUT → Diaw (2 career pen saves) starts",
-            "Taker quality: Lukaku 85% / De Bruyne 75% > Mané (~53%) / Jackson",
+            "England-advance: Polymarket ~56% < sportsbooks ~60% < Opta ~66% — Polymarket is the soft outlier",
+            "Altitude is already in the sharp books' number, yet they still have England higher → the discount is home-public bias",
+            "Mexico 0-2 all-time in WC shootouts (dreadful) vs England improving (Pickford dossier, deep taker pool) — a shootout tilts England",
+            "Kane in record WC form (13 goals); Mexico's 0.56 xG-allowed came against far weaker attacks than this",
         ],
         "caveat": (
-            "Thin-ish book ($1.2M) and a Jul 1 kickoff — act early. A shootout is "
-            "only reached ~15% of the time, so most of the edge is the regulation "
-            "model, not the penalty angle. Size to conviction, not to the full Kelly."
+            "This is the TO-ADVANCE market, not England-to-win-90 — altitude makes a "
+            "comfortable regulation win unlikely (pass on the 1X2). England are missing "
+            "RB Reece James (hamstring) and Rice's fitness is a question; altitude is a "
+            "genuine unknown, so our 66% may be a touch high — size small. Revisit at "
+            "the ~6:00 PM ET Jul 5 teamsheet; if Rice is out/limited, downgrade to Pass."
         ),
     },
     {
         "status": "WATCH",
-        "bet": "Australia to advance",
-        "game": "Australia v Egypt",
-        "date": "Jul 3 · Dallas",
-        "market": "~44%",
-        "model": "59%",
-        "edge": "+16pp",
-        "conviction": "Do not bet yet",
+        "bet": "Belgium to advance",
+        "game": "United States v Belgium",
+        "date": "Jul 6 · Seattle",
+        "market": "~52%",
+        "model": "63%",
+        "edge": "+5pp (fair ~57%)",
+        "conviction": "Do not bet yet — minimum only",
         "size": "—",
         "mechanism": (
-            "The model's single biggest divergence (a sign-flip: it makes "
-            "Australia the favorite) — but this is almost certainly a MODEL BLIND "
-            "SPOT, not an edge. Opta's supercomputer (Egypt ~54%) agrees with the "
-            "market against us, and the goals-only model can't see Egypt's "
-            "individual attacking quality (Salah + Marmoush) vs Australia's "
-            "Championship-level forward line."
+            "Same host-overbet shape as Mexico-England: Polymarket ~52% Belgium-advance "
+            "is soft vs Opta's ~57-58% (76% of tickets are on the USA — home public bias). "
+            "But TWO flags shrink the edge. (1) Our own 63% is inflated — the model's "
+            "documented Belgium-reputation blind spot: Belgium beat Senegal 3-2 AET while "
+            "being out-xG'd 1.84 to 3.18 (running hot, not playing well). (2) The USA crowd "
+            "is a GENUINE partisan home edge here (Seattle), unlike Canada's phantom Houston "
+            "game. Net fair ~57% vs market ~52% ≈ only +5pp."
         ),
         "signals": [
-            "Opta ~54% Egypt to advance — 2nd independent model agrees with market",
-            "Egypt drew Belgium in the group; better opposition quality",
-            "Salah hamstring is the ONE live variable — flip to a BET only if he is ruled out at the teamsheet",
-            "Egypt's top 2 takers (Salah, Marmoush) BOTH missed the Jan-2026 AFCON shootout — the sole pro-Australia note",
+            "Polymarket ~52% < Opta ~57-58% Belgium-advance — soft home-team line",
+            "BUT our 63% is ~5-6pp too high (Belgium out-xG'd 1.84–3.18 by Senegal; won on a 124' penalty)",
+            "USA missing top scorer Balogun (red vs Bosnia, suspended) — helps Belgium, but likely already priced",
+            "Courtois = elite shootout GK; USA minimal WC shootout experience — a tiebreaker for Belgium",
         ],
         "caveat": (
-            "Highest draw prob on the board (32%), so a shootout is genuinely "
-            "live. But back Australia ONLY if Salah is confirmed out — otherwise "
-            "the market/Opta are right and this is our model's blind spot."
+            "This is the SAME 'Belgium-to-advance, model-above-market' signal that nearly "
+            "lost in the R32 (Belgium 0-2 down to Senegal). They are winning on Courtois and "
+            "luck, not performance. Minimum stake at most, and only if Lukaku starts and the "
+            "line stays ≥ current; pass if it tightens to Belgium -125. Never bet Belgium-to-win-90."
         ),
     },
 ]
 
-# Passed the rest: the model under-rates the favorites (its known bias) and the
-# market is right. Shown as a one-line footnote on the tab.
+# Passed the rest: on all six, Opta and/or the sportsbooks agree with the market —
+# our model's divergences are its known biases, not named edges. Tab footnote.
 PASS_NOTE = (
-    "Everything else is a Pass: Argentina / England / Spain / Colombia / Portugal "
-    "to advance all show the model's known under-favorite bias, and the market "
-    "prices them fairly. No named mechanism → no bet."
+    "Everything else is a Pass — and Opta agrees with the market on all six. Canada v Morocco "
+    "(phantom host edge: the game is in Houston with a Morocco-leaning crowd; Opta 52% Morocco), "
+    "Paraguay v France (France near-full-strength; Opta 87% France), Brazil v Norway (Raphinha + "
+    "Paquetá out, Haaland flying — Opta = market, our model is the outlier), Portugal v Spain "
+    "(Spain's class; all models ~50%), Argentina v Egypt (Salah fit after all; Argentina fairly "
+    "priced ~84% to advance), Switzerland v Colombia (Colombia's cross-continent travel + fewer "
+    "rest days + James Rodríguez's uncertain role). No named unpriced edge → no bet."
 )
 
 # --- Penalty-shootout scout --------------------------------------------------
@@ -93,93 +106,80 @@ PASS_NOTE = (
 # reads the shot), 'mixed' (prepared reads + deception), 'unknown' (no profile).
 PENALTY_SCOUT = [
     {
-        "home": "Belgium", "away": "Senegal", "date": "Jul 1",
-        "so_home": 62, "draw90": 27, "edge": "Belgium",
-        "home_gk": ("Courtois", "pre-committer"), "away_gk": ("Diaw", "unknown"),
-        "home_takers": "Lukaku 85%, De Bruyne 75%, Tielemans",
-        "away_takers": "Mané (~53%), Sarr 75%, Jackson",
-        "note": "Courtois studies dossiers and pre-picks a side; Senegal's shootout "
-                "specialist Mendy is OUT (Diaw has 2 career pen saves). Clear Belgium edge.",
-    },
-    {
-        "home": "England", "away": "DR Congo", "date": "Jul 1",
-        "so_home": 67, "draw90": 20, "edge": "England",
-        "home_gk": ("Pickford", "pre-committer"), "away_gk": ("Mpasi / Fayulu", "unknown"),
-        "home_takers": "Kane 88%, Toney 93%, Saka, Rashford, Bellingham",
-        "away_takers": "Wissa, Mbemba; Bakambu & Masuaku unreliable",
-        "note": "Pickford's water-bottle cheat-sheet + the deepest elite taker pool at "
-                "the tournament. Big England edge — but a shootout is unlikely (Eng heavy fav).",
-    },
-    {
-        "home": "United States", "away": "Bosnia and Herzegovina", "date": "Jul 1",
-        "so_home": 55, "draw90": 21, "edge": "USA (modest)",
-        "home_gk": ("Freese", "pre-committer"), "away_gk": ("Vasilj", "unknown"),
-        "home_takers": "Pulisic 87%, Richards, Tillman; Balogun 62% (weak link)",
-        "away_takers": "Džeko 56.5% (age 40), Alajbegović, Demirović",
-        "note": "Freese is an analytical pre-committer (Harvard pen paper, reads hips). "
-                "But Bosnia qualified via TWO shootouts and Vasilj intimidates — only a modest edge.",
-    },
-    {
-        "home": "Switzerland", "away": "Algeria", "date": "Jul 2",
-        "so_home": 56, "draw90": 26, "edge": "Switzerland (narrow)",
-        "home_gk": ("Kobel", "pre-committer"), "away_gk": ("L. Zidane", "unknown"),
-        "home_takers": "Xhaka, Embolo (both converting), Amdouni",
-        "away_takers": "Mahrez 75% (50% recent) — no confirmed 2nd taker",
-        "note": "Kobel arrives with a dossier vs Zidane (no shootout record). But Algeria's "
-                "coach Petković used to manage Switzerland and knows Kobel — partly neutralised.",
-    },
-    {
-        "home": "Spain", "away": "Austria", "date": "Jul 2",
-        "so_home": 58, "draw90": 22, "edge": "Spain",
-        "home_gk": ("Unai Simón", "reactor"), "away_gk": ("Pentz", "unknown"),
-        "home_takers": "Oyarzábal 87.5%, Rodri, Yamal; Morata a liability",
-        "away_takers": "Arnautović 82%, Sabitzer 7/7 (100%)",
-        "note": "Simón is a tested reactor (7 shootout saves for Spain). But Spain's recent "
-                "shootout record is poor and Sabitzer is perfect — edge is real but modest.",
-    },
-    {
-        "home": "Portugal", "away": "Croatia", "date": "Jul 2",
-        "so_home": 53, "draw90": 25, "edge": "Portugal (coin-flip)",
-        "home_gk": ("Diogo Costa", "mixed"), "away_gk": ("Livaković", "mixed"),
-        "home_takers": "Ronaldo 86%, B. Fernandes 91%, Neves, N. Mendes",
-        "away_takers": "Modrić 3/3 WC, Kramarić 90%, Perišić",
-        "note": "Two elite shootout keepers. Diogo Costa (3/3 vs Slovenia, 1/1 vs Spain) is "
-                "the slight differentiator vs Croatia's 4-0 WC shootout culture. Near 50/50.",
-    },
-    {
-        "home": "Argentina", "away": "Cape Verde", "date": "Jul 3",
-        "so_home": 78, "draw90": 15, "edge": "Argentina (huge)",
-        "home_gk": ("Emi Martínez", "mixed"), "away_gk": ("Vozinha", "unknown"),
-        "home_takers": "Messi 78% (84.6% shootout), Lautaro, Álvarez, De Paul",
-        "away_takers": "R. Mendes, Rodrigues — no data at this level",
-        "note": "Dibu is the world's best shootout GK (4W-0L, ~52% opp conversion + mind games). "
-                "Dominant edge — but Argentina win in 90 ~81%, so a shootout is a long shot.",
-    },
-    {
-        "home": "Australia", "away": "Egypt", "date": "Jul 3",
-        "so_home": 57, "draw90": 32, "edge": "Australia (slight)",
-        "home_gk": ("Mat Ryan", "reactor"), "away_gk": ("Shobeir", "unknown"),
-        "home_takers": "Hrustić, Mabil (both scored the 2022 Peru shootout)",
-        "away_takers": "Salah & Marmoush — BOTH missed the Jan-2026 AFCON shootout",
-        "note": "Highest draw prob remaining (32%) → shootout is genuinely live. Egypt's two "
-                "stars both missed their last shootout. NB: the market still (rightly) favors Egypt overall.",
-    },
-    {
-        "home": "Colombia", "away": "Ghana", "date": "Jul 3",
-        "so_home": 58, "draw90": 20, "edge": "Colombia",
-        "home_gk": ("Vargas", "mixed"), "away_gk": ("Asare", "unknown"),
-        "home_takers": "James 83%, L. Díaz, Arias, Ríos",
-        "away_takers": "Jordan Ayew 17/17 (100%) — everyone else unknown",
-        "note": "Ghana's Ayew is a perfect-record wildcard, but Ghana's #2-5 are unstudied and "
-                "Asare is a domestic-league keeper on his first WC start (Ati-Zigi injured).",
-    },
-    {
-        "home": "Canada", "away": "Morocco", "date": "Jul 4 · R16",
-        "so_home": 30, "draw90": 28, "edge": "Morocco (clear)",
+        "home": "Canada", "away": "Morocco", "date": "Jul 4",
+        "so_home": 33, "draw90": 30, "edge": "Morocco (clear)",
         "home_gk": ("Crépeau", "unknown"), "away_gk": ("Bono", "mixed"),
         "home_takers": "J. David 82%; Larin & Davies have missed big shootout pens",
-        "away_takers": "Rahimi, Saibari (clutch vs NED); Díaz & Hakimi both missed",
-        "note": "Bono is the best shootout GK in the world right now (67% save rate over 3 "
-                "tournaments, counter-feint style). The market already prices Morocco — no Canada bet.",
+        "away_takers": "Rahimi, Saibari (netted the decider vs NED); Hakimi & Díaz have missed",
+        "note": "Bono is arguably the world's best shootout GK right now — Morocco are 2/2 in "
+                "recent WC shootouts (beat Spain '22 and the Netherlands '26). Canada have no WC "
+                "shootout history. The market already prices Morocco — no Canada bet.",
+    },
+    {
+        "home": "Paraguay", "away": "France", "date": "Jul 4",
+        "so_home": 55, "draw90": 25, "edge": "Paraguay (slight, if it gets there)",
+        "home_gk": ("Gill", "unknown"), "away_gk": ("Maignan", "reactor"),
+        "home_takers": "Canale (buried the winner vs GER), Enciso, Almirón — riding confidence",
+        "away_takers": "Mbappé, Olise, Rabiot — France 2W-3L with documented shootout anxiety",
+        "note": "Paraguay are 2/2 in WC shootouts (Japan '10, Germany '26) and Gill just saved two "
+                "vs Germany; France are 2W-3L. But France are ~85% to win in 90 — a shootout is a long shot.",
+    },
+    {
+        "home": "Brazil", "away": "Norway", "date": "Jul 5",
+        "so_home": 60, "draw90": 23, "edge": "Brazil (modest)",
+        "home_gk": ("Alisson", "reactor"), "away_gk": ("Nyland", "unknown"),
+        "home_takers": "Vinícius, M. Cunha, Casemiro; Neymar if he's on the pitch",
+        "away_takers": "Haaland, Ødegaard, Sørloth — but zero WC shootout experience as a nation",
+        "note": "Brazil are 8W-7L all-time in WC shootouts (won the '94 final); Norway have NEVER "
+                "contested a WC shootout. Experience favors Brazil, but only 53% historically — modest.",
+    },
+    {
+        "home": "Mexico", "away": "England", "date": "Jul 5",
+        "so_home": 40, "draw90": 26, "edge": "England (clear)",
+        "home_gk": ("Rangel", "unknown"), "away_gk": ("Pickford", "pre-committer"),
+        "home_takers": "Thin, untested taker pool; Mexico are 0-2 all-time in WC shootouts",
+        "away_takers": "Kane 88%, Saka, Palmer, Bellingham — the deepest elite pool in the field",
+        "note": "Mexico are 0W-2L in WC shootouts (dreadful); England are 1W-3L but improving, with "
+                "Pickford's water-bottle dossier and a deep taker pool. Clear England edge — and with "
+                "a ~26% draw prob, a shootout is genuinely live. This reinforces England to advance.",
+    },
+    {
+        "home": "Portugal", "away": "Spain", "date": "Jul 6",
+        "so_home": 58, "draw90": 27, "edge": "Portugal (clear)",
+        "home_gk": ("Diogo Costa", "mixed"), "away_gk": ("Unai Simón", "reactor"),
+        "home_takers": "Ronaldo 86%, B. Fernandes 91%, Neves, N. Mendes",
+        "away_takers": "Oyarzábal 87.5%, Rodri, Yamal",
+        "note": "Portugal have a near-perfect recent shootout record and beat Spain 5-3 on pens in the "
+                "2025 Nations League final; Spain are 1W-4L in WC shootouts — the worst of any major "
+                "nation. Real Portugal edge, but the to-advance line already discounts it (no clean vehicle).",
+    },
+    {
+        "home": "United States", "away": "Belgium", "date": "Jul 6",
+        "so_home": 42, "draw90": 25, "edge": "Belgium (clear)",
+        "home_gk": ("Freese", "pre-committer"), "away_gk": ("Courtois", "pre-committer"),
+        "home_takers": "Pulisic 87%; taker pool thinner with Balogun suspended",
+        "away_takers": "Lukaku 85%, De Bruyne 75%, Tielemans (buried the 124' winner vs SEN)",
+        "note": "Courtois is an elite shootout keeper (Belgium won the '22 R16 shootout 3-0 vs Spain); "
+                "the USA have minimal WC shootout experience. Belgium edge in a shootout — part of why "
+                "Belgium-to-advance stays a WATCH rather than a full bet.",
+    },
+    {
+        "home": "Argentina", "away": "Egypt", "date": "Jul 7",
+        "so_home": 74, "draw90": 24, "edge": "Argentina (huge)",
+        "home_gk": ("Emi Martínez", "mixed"), "away_gk": ("Shobeir", "unknown"),
+        "home_takers": "Messi 84.6% (shootout), Lautaro, Álvarez, De Paul",
+        "away_takers": "Salah (Panenka vs AUS), Marmoush — both missed the Jan-'26 AFCON shootout",
+        "note": "Dibu Martínez is the world's best shootout GK (Argentina 6-1 all-time, won the '22 "
+                "title on shootouts). Egypt won their R32 shootout vs Australia (Salah rehabbed with a "
+                "Panenka), but Argentina's edge is enormous — though at ~80% to win in 90, pens are unlikely.",
+    },
+    {
+        "home": "Switzerland", "away": "Colombia", "date": "Jul 7",
+        "so_home": 50, "draw90": 27, "edge": "Even (no edge)",
+        "home_gk": ("Kobel", "pre-committer"), "away_gk": ("Vargas", "mixed"),
+        "home_takers": "Xhaka, Embolo, Ndoye",
+        "away_takers": "James 83%, L. Díaz, Arias, Ríos",
+        "note": "Both nations are 0-1 in WC shootouts (SUI lost to Ukraine '06, COL to England '18) — "
+                "symmetric and inexperienced. No shootout edge either way.",
     },
 ]
