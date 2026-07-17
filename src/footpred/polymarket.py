@@ -127,8 +127,12 @@ def fetch_results(fixtures: Iterable[tuple], our_teams: list[str]) -> dict:
     our_index = {_norm(t): t for t in our_teams}
     # Closed per-match events carry an ``ended`` flag + a "H-A" ``score`` string,
     # in the event's own team order (teams[0] vs teams[1]).
+    # NB: each match spawns ~8 events (1X2, halftime, exact-score, more-markets,
+    # …), so by the late knockouts the closed-event list runs past 800; page
+    # generously (the ``len(batch) < 100`` break stops us early anyway) or old
+    # group games fall outside the window and get mis-flagged as "upcoming".
     events: list[dict] = []
-    for pg in range(8):
+    for pg in range(30):
         batch = _get("/events", {"series_id": SERIES_ID, "closed": "true",
                                  "limit": 100, "offset": pg * 100,
                                  "order": "startDate", "ascending": "false"})
