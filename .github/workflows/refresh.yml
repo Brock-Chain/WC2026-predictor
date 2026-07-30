@@ -10,8 +10,10 @@ name: Refresh predictions
 # (~1-2 min). Live odds also refresh client-side in the browser, independently.
 
 on:
-  schedule:
-    - cron: "0 */2 * * *"      # every 2 hours (UTC); GitHub cron may lag ~15-60m
+  # PAUSED after the tournament ended (2026-07). The page is final — no need to
+  # keep re-rendering every 2h. Re-enable by uncommenting the schedule below.
+  # schedule:
+  #   - cron: "0 */2 * * *"    # every 2 hours (UTC); GitHub cron may lag ~15-60m
   workflow_dispatch: {}          # manual "Run workflow" button
 
 permissions:
